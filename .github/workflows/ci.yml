@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: argus/backend
+        working-directory: backend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: argus/frontend
+        working-directory: frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: argus/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
         run: npm ci
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: argus/frontend
+        working-directory: frontend
     needs: backend-tests
     steps:
       - name: Checkout
@@ -70,7 +70,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: argus/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -78,7 +78,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install backend dependencies
-        working-directory: argus/backend
+        working-directory: backend
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -90,7 +90,7 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Start backend in background
-        working-directory: argus/backend
+        working-directory: backend
         run: |
           uvicorn app.main:app --host 0.0.0.0 --port 8000 &
           sleep 3
@@ -106,5 +106,5 @@ jobs:
         if: always()
         with:
           name: playwright-report
-          path: argus/frontend/playwright-report/
+          path: frontend/playwright-report/
           retention-days: 30
