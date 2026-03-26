@@ -1,0 +1,4 @@
+﻿declaration_id,name,work_post,work_place,total_income,total_assets,score,triggered_rules,explanation
+0054c278-2a00-471e-ac10-cff26d21650f,,,,12016,60500,1.0,"unexplained_wealth, acquisition_income_mismatch","• Asset-to-income ratio is 5.0x (assets 60,500 vs income 12,016), exceeding 3.0x threshold.
+• Largest acquisition (60,500) is 5.0x total income (12,016), exceeding 1.5x threshold."
+0060b1be-4349-4295-841c-025e694a3e1d,,,,256513,,0.0,,No anomaly signals detected.

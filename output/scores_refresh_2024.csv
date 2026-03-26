@@ -1,0 +1,52 @@
+﻿declaration_id,name,work_post,work_place,total_income,total_assets,score,triggered_rules,explanation
+0054c278-2a00-471e-ac10-cff26d21650f,,,,12016,60500,1.0,"unexplained_wealth, acquisition_income_mismatch","• Asset-to-income ratio is 5.0x (assets 60,500 vs income 12,016), exceeding 3.0x threshold.
+• Largest acquisition (60,500) is 5.0x total income (12,016), exceeding 1.5x threshold."
+0060b1be-4349-4295-841c-025e694a3e1d,,,,256513,,0.0,,No anomaly signals detected.
+007d777a-694c-48f4-a2d4-96ab1f2b4205,,,,393447,194569,0.0,,No anomaly signals detected.
+012f3570-03da-4161-a34b-2f92ae392fbb,,,,2014750,,0.0,,No anomaly signals detected.
+024a0afa-b12e-4f29-949b-4fc596834200,,,,297407,,0.0,,No anomaly signals detected.
+02529664-89d1-4237-8b8a-e7a88c0aa13c,,,,594849,7844,0.0,,No anomaly signals detected.
+026cb4b2-882c-47a1-9e21-871ab80a8ba6,,,,1841016,800843,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 770,000 vs bank 0), exceeding 80% threshold."
+032b0bbc-281b-45b1-8b76-4a2182f58d01,,,,289297,18323,0.0,,No anomaly signals detected.
+03fab3d4-588b-44bb-ad16-e813295fcff3,,,,448982,,0.0,,No anomaly signals detected.
+0650fef1-0669-4e8f-a6c7-036ba501c3e8,,,,41247,,0.0,,No anomaly signals detected.
+0712fe8e-7f7c-4903-b191-a1c17aaec7d4,,,,,,0.0,,No anomaly signals detected.
+0720babb-84a0-4d14-9e39-2204e9856395,,,,400069,84988,0.0,,No anomaly signals detected.
+075159a1-af19-4886-8c13-2fd97051ca70,,,,832542,,0.0,,No anomaly signals detected.
+0832e329-487c-4610-b7b8-12e48c74a4b4,,,,867031,604749,0.0,,No anomaly signals detected.
+086366df-0ba6-4c24-8c5f-1e519c65a4d8,,,,45556,30000,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 30,000 vs bank 0), exceeding 80% threshold."
+096fa83b-5e3c-4307-bcad-442512bd2431,,,,5694268,,0.0,,No anomaly signals detected.
+097cc9ef-53f4-4e59-a1bf-98dc667826a4,,,,477800,225458,0.0,,No anomaly signals detected.
+09974379-152a-4123-9a37-51fffbcaafcf,,,,274145,,0.0,,No anomaly signals detected.
+0a3427ec-805d-43fa-9afd-0853b4029727,,,,1300216,1267642,0.032,family_asset_concentration,"• 22 of 31 assets (71%) are registered to family members, exceeding 70% threshold."
+0a3ab37e-7d07-4ff0-87c5-4e8f44b2b69e,,,,,,0.0,,No anomaly signals detected.
+0b3938d2-f0de-4fdf-8969-321ad9312692,,,,118535,,0.0,,No anomaly signals detected.
+0bcb7b60-1326-41b0-99de-61646adc6d41,,,,427393,873172,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 851,000 vs bank 0), exceeding 80% threshold."
+0c686eab-b99a-447d-961e-68b1b74280ac,,,,733247,,0.444,family_asset_concentration,"• 5 of 6 assets (83%) are registered to family members, exceeding 70% threshold."
+0c6d9818-cf56-49f9-8319-59092f5e7968,,,,148494,131301,0.0,,No anomaly signals detected.
+0d054cfe-14f2-4fb3-9ef4-488ecfe2ce35,,,,1777847,1887000,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 1,887,000 vs bank 0), exceeding 80% threshold."
+0d971fbc-68ed-440a-8737-200e2ddf2326,,,,1013018,,0.0,,No anomaly signals detected.
+0eab68e0-9cad-41f3-9517-0269d79f1002,,,,1196520,,0.0,,No anomaly signals detected.
+0f7f7f4e-ab9c-4928-b1cb-58dc96e87574,,,,46000,,0.0,,No anomaly signals detected.
+0f8c9866-d57a-4c42-a3e4-243320878583,,,,282693,687264,0.0,,No anomaly signals detected.
+0ff16e79-3b81-4886-aee8-5859c25d9191,,,,859468,,0.0,,No anomaly signals detected.
+1045b40f-dc7b-4b80-9808-74e7c2bc513f,,,,699407,480000,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 480,000 vs bank 0), exceeding 80% threshold."
+10a843de-3b28-4115-94df-7bf1a12b119c,,,,,,0.0,,No anomaly signals detected.
+10f01c7a-c004-4dae-96fc-5466bd9ae49f,,,,518188,506252,0.0,,No anomaly signals detected.
+11431f9b-91f7-4a5a-893b-c86ecadf7d94,,,,,19980,0.0,,No anomaly signals detected.
+117533ed-c44d-4e33-a7e0-f4b8798da30f,,,,239340,92177,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 30,000 vs bank 0), exceeding 80% threshold."
+11e9a902-251e-49b5-a927-cd51baa2f1f2,,,,301460,,0.0,,No anomaly signals detected.
+1200c00e-7c5f-4edd-befc-a6616d6cc841,,,,119052,,0.0,,No anomaly signals detected.
+120b75f8-c38e-4085-8994-e4d88635ad99,,,,1282834,497500,0.125,cash_to_bank_ratio,"• Cash is 83% of total monetary assets (cash 377,400 vs bank 80,000), exceeding 80% threshold."
+14241091-c5f8-4015-b730-a26ea02a39ca,,,,1269108,601405,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 416,500 vs bank 0), exceeding 80% threshold."
+14853a93-f0ef-45b0-ae06-ed2f661266f8,,,,,,0.778,unknown_value_frequency,"• 8 of 9 value fields (89%) are marked unknown or unavailable, exceeding 50% threshold."
+14af3c1e-f4bc-4ced-bebe-6ec2cd7b1af0,,,,792840,607934,0.0,,No anomaly signals detected.
+1542b238-7312-4178-8027-b174eaac33ce,,,,768668,135000,0.0,,No anomaly signals detected.
+16ca0e4f-2cc9-4bf6-a4ed-f8b0d14515e0,,,,2232274,300000,1.0,cash_to_bank_ratio,"• Cash is 100% of total monetary assets (cash 300,000 vs bank 0), exceeding 80% threshold."
+173eb90c-34ea-4606-905c-be44fea32275,,,,,,0.0,,No anomaly signals detected.
+18bddf67-ded0-4160-b4e6-f6054b12178e,,,,,,0.0,,No anomaly signals detected.
+193e4e60-a35d-446d-bfdb-f5e45cb762d0,,,,649832,17781,0.0,,No anomaly signals detected.
+1985985f-6830-4058-b92b-a9a8619445c6,,,,,112000,0.0,,No anomaly signals detected.
+19b8b4ff-5cd3-471e-9cda-66887430d817,,,,614000,,0.0,,No anomaly signals detected.
+19da9746-56a1-432f-ba93-4b755b0c002f,,,,1371634,91640,0.0,,No anomaly signals detected.
+1a2b13b0-4950-49fc-b60b-0e8bf40b50a9,,,,342425,,0.0,,No anomaly signals detected.

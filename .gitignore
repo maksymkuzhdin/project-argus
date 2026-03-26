@@ -1,0 +1,38 @@
+# ──── Environment ────
+.env
+
+# ──── Python ────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# ──── Node / Next.js ────
+node_modules/
+frontend/.next/
+frontend/out/
+
+# ──── Data (raw declarations can be large) ────
+data/raw/
+
+# ──── IDE ────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ──── OS ────
+.DS_Store
+Thumbs.db
+
+# ──── Docker ────
+*.log
+
+# ──── Local debug artifacts ────
+debug_*.json
+*_dump.json
+out.json
+temp_id.txt

@@ -1,0 +1,42 @@
+{
+  "data": [
+    {
+      "establishment_ua_company_name": "АКЦІОНЕРНЕ ТОВАРИСТВО КОМЕРЦІЙНИЙ БАНК \"ПРИВАТБАНК\"",
+      "establishment_type": "Юридична особа, зареєстрована в Україні",
+      "person_open_account_extendedstatus": "1",
+      "person_who_care": [
+        {
+          "person": "1"
+        }
+      ],
+      "iteration": "1742029052176",
+      "establishment_ua_company_code": "14360570",
+      "persons_has_accounts": {
+        "1742029052221": {
+          "person_has_account": "1",
+          "iteration": "1742029052221"
+        }
+      },
+      "person_open_account": "[Не застосовується]"
+    },
+    {
+      "establishment_ua_company_name": "АКЦІОНЕРНЕ ТОВАРИСТВО \"ДЕРЖАВНИЙ ЕКСПОРТНО-ІМПОРТНИЙ БАНК УКРАЇНИ\"",
+      "establishment_type": "Юридична особа, зареєстрована в Україні",
+      "person_open_account_extendedstatus": "1",
+      "person_who_care": [
+        {
+          "person": "1742022434230"
+        }
+      ],
+      "iteration": "1742030020400",
+      "establishment_ua_company_code": "00032112",
+      "persons_has_accounts": {
+        "1742030020441": {
+          "person_has_account": "1742022434230",
+          "iteration": "1742030020441"
+        }
+      },
+      "person_open_account": "[Не застосовується]"
+    }
+  ]
+}
