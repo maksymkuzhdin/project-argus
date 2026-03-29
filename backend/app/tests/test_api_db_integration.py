@@ -217,6 +217,18 @@ def test_db_path_declaration_detail_and_person_timeline() -> None:
         assert person["user_declarant_id"] == 777
         assert person["snapshot_count"] == 2
         assert len(person["changes"]) == 1
+
+        snap = person["snapshots"][0]
+        assert "total_real_estate" in snap
+        assert "total_assets" in snap
+        assert "unknown_share" in snap
+
+        chg = person["changes"][0]
+        assert "asset_growth" in chg
+        assert "income_growth" in chg
+        assert "unknown_share_delta" in chg
+        assert "role_changed" in chg
+        assert "major_assets_appeared" in chg
     finally:
         app.dependency_overrides.clear()
 

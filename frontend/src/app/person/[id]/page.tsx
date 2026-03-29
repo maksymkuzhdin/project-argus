@@ -11,6 +11,18 @@ function formatMoney(value: string | null): string {
   return n.toLocaleString();
 }
 
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function declarationTypeLabel(value: number | null): string {
+  if (value === 1) return "Annual";
+  if (value === 2) return "Initial";
+  if (value === 3) return "Cessation";
+  return "Other";
+}
+
 export default async function PersonTimelinePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params;
   const personId = Number(resolvedParams.id);
@@ -86,13 +98,19 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
 
         <section className="space-y-3" data-testid="timeline">
           <h2 className="text-xl font-semibold text-zinc-100">Yearly Snapshots</h2>
-          <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-zinc-900 text-zinc-500 border-b border-zinc-800">
                 <tr>
                   <th className="px-4 py-3">Year</th>
+                  <th className="px-4 py-3">Type</th>
                   <th className="px-4 py-3">Income</th>
                   <th className="px-4 py-3">Monetary</th>
+                  <th className="px-4 py-3">Real Estate</th>
+                  <th className="px-4 py-3">Total Assets</th>
+                  <th className="px-4 py-3">Cash / Bank</th>
+                  <th className="px-4 py-3">Unknown Share</th>
+                  <th className="px-4 py-3">Counts (I/M/RE/V)</th>
                   <th className="px-4 py-3">Role / Institution</th>
                   <th className="px-4 py-3">Declaration</th>
                 </tr>
@@ -101,8 +119,22 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
                 {data.snapshots.map((snap) => (
                   <tr key={snap.declaration_id} className="hover:bg-zinc-800/20 transition-colors">
                     <td className="px-4 py-3 font-mono">{snap.declaration_year}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
+                        {declarationTypeLabel(snap.declaration_type)}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 font-mono">{formatMoney(snap.total_income)}</td>
                     <td className="px-4 py-3 font-mono">{formatMoney(snap.total_monetary)}</td>
+                    <td className="px-4 py-3 font-mono">{formatMoney(snap.total_real_estate)}</td>
+                    <td className="px-4 py-3 font-mono">{formatMoney(snap.total_assets)}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      {formatMoney(snap.cash)} / {formatMoney(snap.bank)}
+                    </td>
+                    <td className="px-4 py-3 font-mono">{formatPercent(snap.unknown_share)}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      {snap.income_count}/{snap.monetary_count}/{snap.real_estate_count}/{snap.vehicle_count}
+                    </td>
                     <td className="px-4 py-3">
                       <div>{snap.role || "-"}</div>
                       <div className="text-xs text-zinc-500">{snap.institution || "-"}</div>
@@ -122,15 +154,19 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
         {data.changes.length > 0 ? (
           <section className="space-y-3">
             <h2 className="text-xl font-semibold text-zinc-100">Year-over-Year Changes</h2>
-            <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden">
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="bg-zinc-900 text-zinc-500 border-b border-zinc-800">
                   <tr>
                     <th className="px-4 py-3">Period</th>
                     <th className="px-4 py-3">Income Delta</th>
                     <th className="px-4 py-3">Asset Delta</th>
-                    <th className="px-4 py-3">Income Ratio</th>
-                    <th className="px-4 py-3">Asset Ratio</th>
+                    <th className="px-4 py-3">Cash Delta</th>
+                    <th className="px-4 py-3">Income Growth</th>
+                    <th className="px-4 py-3">Asset Growth</th>
+                    <th className="px-4 py-3">Unknown Delta</th>
+                    <th className="px-4 py-3">Role Change</th>
+                    <th className="px-4 py-3">Major Assets (A/D)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/50">
@@ -139,13 +175,52 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
                       <td className="px-4 py-3 font-mono">{`${chg.from_year} -> ${chg.to_year}`}</td>
                       <td className="px-4 py-3 font-mono">{formatMoney(chg.income_delta)}</td>
                       <td className="px-4 py-3 font-mono">{formatMoney(chg.monetary_delta)}</td>
-                      <td className="px-4 py-3 font-mono">{chg.income_ratio ?? "-"}</td>
-                      <td className="px-4 py-3 font-mono">{chg.monetary_ratio ?? "-"}</td>
+                      <td className="px-4 py-3 font-mono">{formatMoney(chg.cash_delta)}</td>
+                      <td className="px-4 py-3 font-mono">{formatPercent(chg.income_growth)}</td>
+                      <td className="px-4 py-3 font-mono">{formatPercent(chg.asset_growth)}</td>
+                      <td className="px-4 py-3 font-mono">{formatPercent(chg.unknown_share_delta)}</td>
+                      <td className="px-4 py-3 text-xs">
+                        {chg.role_changed ? `${chg.role_prev || "-"} -> ${chg.role_curr || "-"}` : "No"}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs">
+                        {chg.major_assets_appeared}/{chg.major_assets_disappeared}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          </section>
+        ) : null}
+
+        {data.changes.length > 0 ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold text-zinc-100">Major Asset Changes (CR14 Context)</h2>
+            <div className="grid gap-3">
+              {data.changes.map((chg) => (
+                <div
+                  key={`asset-${chg.from_year}-${chg.to_year}`}
+                  className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 text-sm"
+                >
+                  <div className="text-zinc-300 font-medium">{chg.from_year}{" -> "}{chg.to_year}</div>
+                  <div className="mt-2 text-zinc-400">
+                    Appeared: <span className="text-zinc-200 font-mono">{chg.major_assets_appeared}</span>
+                    {" | "}
+                    Disappeared: <span className="text-zinc-200 font-mono">{chg.major_assets_disappeared}</span>
+                  </div>
+                  <div className="mt-1 text-zinc-500 text-xs">
+                    Max appeared value: {formatMoney(chg.max_appeared_value)}
+                    {" | "}
+                    Max disappeared value: {formatMoney(chg.max_disappeared_value)}
+                    {" | "}
+                    One-off income (current year): {formatMoney(chg.one_off_income_curr)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-zinc-500">
+              Growth percentages and unknown-share trends are contextual signals; always review underlying declarations.
+            </p>
           </section>
         ) : null}
       </section>
