@@ -608,7 +608,11 @@ def get_declaration(doc_id: str, db: Session = Depends(get_db)) -> dict[str, Any
     return {
         "id": doc_id,
         "user_declarant_id": profile.user_declarant_id,
-        "raw_metadata": {},
+        "raw_metadata": {
+            "year": profile.declaration_year,
+            "date": None,
+            "declaration_type": profile.declaration_type,
+        },
         "bio": bio,
         "family_members": [_family_to_dict(f) for f in family],
         "real_estate": [_real_estate_to_dict(r) for r in real_estate],

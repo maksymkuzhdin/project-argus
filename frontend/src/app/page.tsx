@@ -171,6 +171,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
               <thead className="bg-zinc-900 text-zinc-500 border-b border-zinc-800">
                 <tr>
                   <th className="px-6 py-4 font-medium">Declarant</th>
+                  <th className="px-6 py-4 font-medium text-center">Year</th>
                   <th className="px-6 py-4 font-medium">Institution / Role</th>
                   <th className="px-6 py-4 font-medium text-right">Income</th>
                   <th className="px-6 py-4 font-medium text-right">Assets</th>
@@ -204,6 +205,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                       <div className="text-xs text-zinc-600 font-mono mt-1">
                         {decl.declaration_id.split("-")[0]}...
                       </div>
+                    </td>
+                    <td className="px-6 py-4 text-center font-mono text-zinc-300">
+                      {decl.declaration_year || "—"}
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-zinc-300">{decl.institution || "—"}</div>
@@ -240,7 +244,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
 
                 {declarations.items.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-zinc-500">
+                    <td colSpan={7} className="px-6 py-12 text-center text-zinc-500">
                       {query ? "No declarations match this search." : "No declarations processed yet."}
                     </td>
                   </tr>

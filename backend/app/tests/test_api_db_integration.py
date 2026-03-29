@@ -206,6 +206,7 @@ def test_db_path_declaration_detail_and_person_timeline() -> None:
         detail = detail_response.json()
 
         assert detail["id"] == "doc-2"
+        assert detail["raw_metadata"]["year"] == 2024
         assert detail["summary"]["score"] == 0.8
         assert detail["summary"]["rule_details"][0]["rule_name"] == "cash_to_bank_ratio"
 

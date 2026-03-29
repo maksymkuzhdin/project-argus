@@ -34,6 +34,105 @@ function composeDeclarantName(bio: DeclarationDetail["bio"]): string {
         .join(" ");
 }
 
+function formatLocation(item: Record<string, unknown>): string {
+    const city = formatField(item.city).trim();
+    const region = formatField(item.region).trim();
+    const district = formatField(item.district).trim();
+    return [city, district, region].filter(Boolean).join(", ");
+}
+
+function extractYear(value: unknown): string {
+    const raw = formatField(value);
+    const match = raw.match(/(19\d{2}|20\d{2})/);
+    return match ? match[1] : "—";
+}
+
+function formatNumberLike(value: unknown): string {
+    const raw = formatField(value).trim();
+    if (!raw) return "—";
+    const n = Number(raw.replace(/\s+/g, "").replace(",", "."));
+    if (!Number.isFinite(n)) return raw;
+    return n.toLocaleString();
+}
+
+function resolveIncomeRecipient(personRef: unknown, familyMembers: Record<string, unknown>[]): string {
+    const ref = formatField(personRef).trim();
+    if (!ref || ref === "1" || ref.toLowerCase() === "declarant") return "Declarant";
+
+    const member = familyMembers.find((m) => formatField(m.member_id).trim() === ref);
+    if (!member) return `Person ${ref}`;
+
+    const relation = formatField(member.relation).trim();
+    const fullName = [member.lastname, member.firstname, member.middlename]
+        .map((v) => formatField(v).trim())
+        .filter(Boolean)
+        .join(" ");
+
+    if (relation && fullName) return `${relation} (${fullName})`;
+    return relation || fullName || `Person ${ref}`;
+}
+
+type AggregatedRealEstate = {
+    key: string;
+    objectType: string;
+    area: string;
+    location: string;
+    acquisitionYear: string;
+    value: string;
+    owners: string[];
+};
+
+function aggregateRealEstate(items: Record<string, unknown>[]): AggregatedRealEstate[] {
+    const groups = new Map<string, AggregatedRealEstate>();
+
+    for (const item of items) {
+        const objectType = formatField(item.object_type).trim() || "—";
+        const area = formatField(item.total_area).trim();
+        const location = formatLocation(item);
+        const acquisitionYear = extractYear(item.owning_date);
+        const value = formatNumberLike(item.cost_assessment);
+        const rawIteration = formatField(item.raw_iteration).trim();
+
+        const key = rawIteration || [
+            objectType,
+            area,
+            location,
+            acquisitionYear,
+            value,
+            formatField(item.country).trim(),
+        ].join("|");
+
+        const owner = formatField(item.right_belongs_resolved).trim() || "Unknown owner";
+        const ownershipType = formatField(item.ownership_type).trim();
+        const ownershipPercent = formatField(item.percent_ownership).trim();
+        const ownerLabel = [
+            owner,
+            ownershipType ? `(${ownershipType})` : "",
+            ownershipPercent ? `${ownershipPercent}%` : "",
+        ].filter(Boolean).join(" ");
+
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                objectType,
+                area: area || "—",
+                location: location || "—",
+                acquisitionYear,
+                value,
+                owners: [ownerLabel],
+            });
+            continue;
+        }
+
+        const existing = groups.get(key)!;
+        if (!existing.owners.includes(ownerLabel)) {
+            existing.owners.push(ownerLabel);
+        }
+    }
+
+    return Array.from(groups.values());
+}
+
 export default async function DeclarationDetail({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
     let data: DeclarationDetail | null = null;
@@ -65,6 +164,10 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
     const scoreBand = getScoreBand(Number(summary.score || 0));
     const recordId = formatField(resolvedParams.id);
     const nazkRecordUrl = `https://public.nazk.gov.ua/documents/${encodeURIComponent(recordId)}`;
+    const realEstateItems = (data.real_estate as Record<string, unknown>[]) || [];
+    const familyMembers = (data.family_members as Record<string, unknown>[]) || [];
+    const incomes = (data.incomes as Record<string, unknown>[]) || [];
+    const aggregatedRealEstate = aggregateRealEstate(realEstateItems);
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -118,8 +221,8 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
 
                     <div className="flex gap-4 mt-6 text-sm">
                         <div className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 flex items-center gap-2">
-                            <span className="text-zinc-500">Year</span>
-                            <span className="text-zinc-300 font-medium">{formatField(rawMetadata.year)}</span>
+                            <span className="text-zinc-500">Declaration Year</span>
+                            <span className="text-zinc-300 font-medium">{formatField(rawMetadata.year) || "—"}</span>
                         </div>
                         <div className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 flex items-center gap-2">
                             <span className="text-zinc-500">ID</span>
@@ -241,7 +344,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                 )}
 
                 {/* Real Estate */}
-                {Array.isArray(data.real_estate) && data.real_estate.length > 0 && (
+                {aggregatedRealEstate.length > 0 && (
                     <section>
                         <h2 className="text-xl font-semibold text-zinc-100 mb-4">Real Estate</h2>
                         <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
@@ -251,18 +354,24 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                                         <th className="px-6 py-3 font-medium">Type</th>
                                         <th className="px-6 py-3 font-medium">Area (m²)</th>
                                         <th className="px-6 py-3 font-medium">Location</th>
-                                        <th className="px-6 py-3 font-medium">Owner</th>
-                                        <th className="px-6 py-3 font-medium">Ownership Type</th>
+                                        <th className="px-6 py-3 font-medium">Acquired</th>
+                                        <th className="px-6 py-3 font-medium text-right">Declared Value</th>
+                                        <th className="px-6 py-3 font-medium">Owners / Shares</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {data.real_estate.map((item: Record<string, unknown>, i: number) => (
-                                        <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
-                                            <td className="px-6 py-3">{formatField(item.object_type)}</td>
-                                            <td className="px-6 py-3 font-mono">{formatField(item.total_area)}</td>
-                                            <td className="px-6 py-3">{formatField(item.city)} {item.region && formatField(item.region) !== "" ? `(${formatField(item.region)})` : ""}</td>
-                                            <td className="px-6 py-3 text-emerald-400/80">{formatField(item.right_belongs_resolved)}</td>
-                                            <td className="px-6 py-3">{formatField(item.ownership_type)}</td>
+                                    {aggregatedRealEstate.map((item) => (
+                                        <tr key={item.key} className="hover:bg-zinc-800/20 transition-colors align-top">
+                                            <td className="px-6 py-3">{item.objectType}</td>
+                                            <td className="px-6 py-3 font-mono">{item.area}</td>
+                                            <td className="px-6 py-3">{item.location}</td>
+                                            <td className="px-6 py-3 font-mono">{item.acquisitionYear}</td>
+                                            <td className="px-6 py-3 text-right font-mono text-zinc-300">{item.value}</td>
+                                            <td className="px-6 py-3 text-emerald-400/80">
+                                                {item.owners.map((owner, idx) => (
+                                                    <div key={`${item.key}-owner-${idx}`}>{owner}</div>
+                                                ))}
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -326,21 +435,23 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                 )}
 
                 {/* Incomes */}
-                {Array.isArray(data.incomes) && data.incomes.length > 0 && (
+                {incomes.length > 0 && (
                     <section>
                         <h2 className="text-xl font-semibold text-zinc-100 mb-4">Incomes</h2>
                         <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
                             <table className="w-full text-left text-sm text-zinc-400">
                                 <thead className="bg-zinc-900/50 text-zinc-500 border-b border-zinc-800">
                                     <tr>
+                                        <th className="px-6 py-3 font-medium">Recipient</th>
                                         <th className="px-6 py-3 font-medium">Type</th>
                                         <th className="px-6 py-3 font-medium">Source</th>
                                         <th className="px-6 py-3 font-medium text-right">Amount (UAH)</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {data.incomes.map((item: Record<string, unknown>, i: number) => (
+                                    {incomes.map((item: Record<string, unknown>, i: number) => (
                                         <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
+                                            <td className="px-6 py-3 text-emerald-400/80">{resolveIncomeRecipient(item.person_ref, familyMembers)}</td>
                                             <td className="px-6 py-3">{formatField(item.income_type)}</td>
                                             <td className="px-6 py-3 line-clamp-2" title={String(formatField(item.source_name))}>{formatField(item.source_name)}</td>
                                             <td className="px-6 py-3 text-right font-mono text-zinc-300">
