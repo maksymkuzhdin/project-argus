@@ -105,6 +105,7 @@ jobs:
 
       - name: Run e2e smoke tests
         env:
+          INTERNAL_API_URL: http://localhost:8000
           PLAYWRIGHT_TEST_BASE_URL: http://localhost:3000
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run e2e

@@ -55,6 +55,10 @@ export default defineConfig({
   webServer: {
     command: "npm run dev",
     url: "http://localhost:3000",
+    env: {
+      INTERNAL_API_URL: process.env.INTERNAL_API_URL || "http://localhost:8000",
+      NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+    },
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
   },
