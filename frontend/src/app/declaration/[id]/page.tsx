@@ -238,6 +238,8 @@ export default async function DeclarationDetail({
     const vehicleItems = (data.vehicles as Record<string, unknown>[]) || [];
     const aggregatedRealEstate = aggregateRealEstate(realEstateItems);
     const aggregatedVehicles = aggregateVehicles(vehicleItems);
+    const uniquePropertyCount = aggregatedRealEstate.length;
+    const rawPropertyRecordCount = realEstateItems.length;
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -359,7 +361,10 @@ export default async function DeclarationDetail({
                             <div className="text-3xl font-mono text-zinc-100 mb-4">
                                 {summary.total_assets ? Number(formatField(summary.total_assets)).toLocaleString() : "0"}
                             </div>
-                            <div className="text-xs text-zinc-600">{formatField(data.monetary?.length || 0)} monetary items + {formatField(data.real_estate?.length || 0)} properties</div>
+                            <div className="text-xs text-zinc-600">
+                                {formatField(data.monetary?.length || 0)} monetary items + {uniquePropertyCount} properties
+                                {rawPropertyRecordCount !== uniquePropertyCount ? ` (${rawPropertyRecordCount} ownership records)` : ""}
+                            </div>
                         </div>
                     </div>
                 </section>
