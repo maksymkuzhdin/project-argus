@@ -182,15 +182,16 @@ test.describe("Project Argus E2E Smoke Tests", () => {
     await page.goto(`${BASE_URL}/declaration/nonexistent-id-12345`);
 
     // Verify error message is shown or redirected to safe state
-    const errorMessage = page.locator(
-      "text=/not found|error|try again/i, [data-testid='error']"
-    );
+    const errorMessageText = page.getByText(/not found|error|try again/i);
+    const errorMessageTestId = page.locator("[data-testid='error']");
     const dashboardLink = page.locator(
       "a:has-text(/dashboard|home|back/i), button:has-text(/back/i)"
     );
 
     const hasErrorHandling =
-      (await errorMessage.count()) > 0 || (await dashboardLink.count()) > 0;
+      (await errorMessageText.count()) > 0 ||
+      (await errorMessageTestId.count()) > 0 ||
+      (await dashboardLink.count()) > 0;
     expect(hasErrorHandling).toBe(true);
   });
 

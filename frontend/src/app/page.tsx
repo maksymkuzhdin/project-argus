@@ -106,7 +106,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
           </div>
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
             <div className="text-zinc-500 text-sm font-medium mb-1">Avg Anomaly Score</div>
-            <div className="text-3xl font-semibold text-zinc-100">{stats.average_score.toFixed(3)}</div>
+            <div className="text-3xl font-semibold text-zinc-100">{stats.average_score.toFixed(1)}</div>
           </div>
         </div>
 
@@ -186,7 +186,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className={`font-mono font-medium ${decl.score > 0 ? "text-amber-500" : "text-emerald-500"}`}>
-                        {decl.score.toFixed(3)}
+                        {decl.score.toFixed(1)}
                       </div>
                     </td>
                   </tr>

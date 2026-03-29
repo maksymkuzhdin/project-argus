@@ -64,7 +64,7 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
 
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
           <h2 className="text-lg font-semibold text-zinc-100 mb-3">Timeline Score</h2>
-          <div className="text-4xl font-mono font-bold text-amber-500">{data.timeline_score.total_score.toFixed(3)}</div>
+          <div className="text-4xl font-mono font-bold text-amber-500">{data.timeline_score.total_score.toFixed(1)}</div>
           {data.timeline_score.triggered_rules.length > 0 ? (
             <ul className="mt-4 text-sm text-zinc-300 space-y-2">
               {data.timeline_score.triggered_rules.map((rule) => (

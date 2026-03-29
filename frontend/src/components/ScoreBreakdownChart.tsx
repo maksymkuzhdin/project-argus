@@ -36,6 +36,7 @@ export default function ScoreBreakdownChart({ ruleDetails, totalScore }: Props) 
     score: r.score,
     triggered: r.triggered,
   }));
+  const maxRuleScore = Math.max(...data.map((d) => d.score), 1);
 
   if (data.length === 0) {
     return (
@@ -56,7 +57,7 @@ export default function ScoreBreakdownChart({ ruleDetails, totalScore }: Props) 
             tickLine={false}
           />
           <YAxis
-            domain={[0, 1]}
+            domain={[0, Math.ceil(maxRuleScore)]}
             tick={{ fill: "#71717a", fontSize: 11 }}
             axisLine={false}
             tickLine={false}
@@ -70,7 +71,7 @@ export default function ScoreBreakdownChart({ ruleDetails, totalScore }: Props) 
               color: "#d4d4d8",
               fontSize: "12px",
             }}
-            formatter={(value) => [Number(value).toFixed(3), "Score"]}
+            formatter={(value) => [Number(value).toFixed(2), "Rule Points"]}
             cursor={{ fill: "rgba(255,255,255,0.04)" }}
           />
           <ReferenceLine y={0} stroke="#3f3f46" />
@@ -91,7 +92,7 @@ export default function ScoreBreakdownChart({ ruleDetails, totalScore }: Props) 
             totalScore > 0 ? "text-amber-500" : "text-emerald-500"
           }`}
         >
-          {totalScore.toFixed(3)}
+          {totalScore.toFixed(1)}
         </span>
       </div>
     </div>
