@@ -57,6 +57,7 @@ export interface DeclarationDetail {
     summary: DeclarationSummary;
     bio: {
         firstname: string;
+        middlename?: string;
         lastname: string;
         work_post: string;
         work_place: string;

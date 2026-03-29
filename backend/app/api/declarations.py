@@ -233,9 +233,13 @@ def _ensure_loaded() -> None:
                 "features": full["features"],
             }
 
-            name = (
-                f"{bio.get('firstname', '')} {bio.get('lastname', '')}"
-            ).strip() or "Unknown Official"
+            name = " ".join(
+                p for p in [
+                    bio.get("firstname", ""),
+                    bio.get("middlename", ""),
+                    bio.get("lastname", ""),
+                ] if p
+            ) or "Unknown Official"
 
             summary = {
                 "declaration_id": doc_id,
@@ -347,6 +351,7 @@ def list_declarations(
             DeclarantProfile.user_declarant_id,
             DeclarantProfile.declaration_year,
             DeclarantProfile.firstname,
+            DeclarantProfile.middlename,
             DeclarantProfile.lastname,
             DeclarantProfile.work_post,
             DeclarantProfile.work_place,
@@ -392,7 +397,9 @@ def list_declarations(
 
     items = []
     for row in rows:
-        name = f"{row.firstname or ''} {row.lastname or ''}".strip() or "Unknown Official"
+        name = " ".join(
+            p for p in [row.firstname, row.middlename, row.lastname] if p
+        ) or "Unknown Official"
         triggered = row.triggered_rules.split(",") if row.triggered_rules else []
 
         items.append({
@@ -539,7 +546,13 @@ def get_declaration(doc_id: str, db: Session = Depends(get_db)) -> dict[str, Any
         "score": float(score_row.total_score) if score_row and score_row.total_score else 0.0,
         "triggered_rules": triggered,
         "explanation": score_row.explanation_summary if score_row else "No anomaly signals detected.",
-        "name": f"{bio.get('firstname', '')} {bio.get('lastname', '')}".strip() or "Unknown Official",
+        "name": " ".join(
+            p for p in [
+                bio.get("firstname", ""),
+                bio.get("middlename", ""),
+                bio.get("lastname", ""),
+            ] if p
+        ) or "Unknown Official",
         "role": bio.get("work_post", ""),
         "institution": bio.get("work_place", ""),
         "rule_details": rule_details,

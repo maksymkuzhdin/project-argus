@@ -81,7 +81,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                     <div className="flex justify-between items-start">
                         <div>
                             <h1 className="text-3xl font-bold tracking-tight text-zinc-50 mb-2">
-                                {formatField(bio.firstname)} {formatField(bio.lastname)}
+                                {formatField(bio.firstname)} {formatField(bio.middlename)} {formatField(bio.lastname)}
                             </h1>
                             <div className="text-lg text-zinc-400">{formatField(bio.work_post)}</div>
                             <div className="text-zinc-500">{formatField(bio.work_place)}</div>
