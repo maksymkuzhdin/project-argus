@@ -1,6 +1,8 @@
 # Ukraine-Focused Automated Declaration Checks (Draft Rulebook)
 
-**Version:** 0.1 (for implementation prototype)  
+**Version:** 0.9 (Pre-Beta Reference)  
+**Last Updated:** March 29, 2026  
+**Status:** Reflects current backend implementation state for scoring/timeline rules.  
 **Scope:** Ukraine’s public e-declarations (post‑2021 form), using only fields that are publicly visible in JSON (no external registers).  
 **Goal:** Prioritize corruption‑risk signals, keep technical/data‑quality issues separate.
 

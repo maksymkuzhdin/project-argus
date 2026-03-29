@@ -289,3 +289,87 @@ def test_db_path_person_timeline_handles_sparse_monetary_rows() -> None:
         assert "timeline_score" in payload
     finally:
         app.dependency_overrides.clear()
+
+
+def test_db_path_person_timeline_requires_multi_year_data() -> None:
+    def _seed_single_year(db_session) -> None:
+        db_session.add(
+            DeclarantProfile(
+                declaration_id="doc-single-1",
+                user_declarant_id=999,
+                declaration_year=2024,
+                declaration_type=1,
+                firstname="Single",
+                lastname="Year",
+                work_post="Analyst",
+                work_place="Regional Office",
+                post_type="B",
+            )
+        )
+
+    client = _make_client_with_extra_seed(_seed_single_year)
+    try:
+        person_response = client.get("/api/persons/999")
+        assert person_response.status_code == 404
+        payload = person_response.json()
+        detail = payload.get("detail") or ((payload.get("error") or {}).get("message") or "")
+        assert "multi-year" in detail.lower() or "2+" in detail
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_db_path_person_timeline_handles_missing_income_rows() -> None:
+    def _seed_missing_income_rows(db_session) -> None:
+        db_session.add_all(
+            [
+                DeclarantProfile(
+                    declaration_id="doc-noinc-1",
+                    user_declarant_id=990,
+                    declaration_year=2023,
+                    declaration_type=1,
+                    firstname="No",
+                    lastname="Income",
+                    work_post="Inspector",
+                    work_place="Regional Office",
+                    post_type="B",
+                ),
+                DeclarantProfile(
+                    declaration_id="doc-noinc-2",
+                    user_declarant_id=990,
+                    declaration_year=2024,
+                    declaration_type=1,
+                    firstname="No",
+                    lastname="Income",
+                    work_post="Inspector",
+                    work_place="Regional Office",
+                    post_type="B",
+                ),
+                MonetaryAsset(
+                    declaration_id="doc-noinc-1",
+                    person_ref="1",
+                    asset_type="cash",
+                    currency_code="UAH",
+                    amount=Decimal("10000"),
+                ),
+                MonetaryAsset(
+                    declaration_id="doc-noinc-2",
+                    person_ref="1",
+                    asset_type="cash",
+                    currency_code="UAH",
+                    amount=Decimal("15000"),
+                ),
+            ]
+        )
+
+    client = _make_client_with_extra_seed(_seed_missing_income_rows)
+    try:
+        person_response = client.get("/api/persons/990")
+        assert person_response.status_code == 200
+        payload = person_response.json()
+
+        assert payload["user_declarant_id"] == 990
+        assert payload["snapshot_count"] == 2
+        assert len(payload["changes"]) == 1
+        assert "timeline_score" in payload
+    finally:
+        app.dependency_overrides.clear()

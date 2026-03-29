@@ -3,7 +3,7 @@ Project Argus — Multi-year timeline assembler.
 
 Groups processed declarations for the same person (by ``user_declarant_id``),
 sorts them chronologically, and computes year-over-year deltas used by the
-temporal scoring rules (CR5, BR2, BR4, and the existing YOY rules).
+temporal scoring rules (CR5, CR14, CR15, BR1, BR2, BR4, and YOY rules).
 """
 
 from __future__ import annotations
@@ -130,6 +130,21 @@ def _safe_growth(prev: Decimal | None, curr: Decimal | None) -> float | None:
     return float((curr - prev) / prev)
 
 
+def _sum_monetary_amounts(monetary: list[dict[str, Any]]) -> Decimal | None:
+    total = Decimal(0)
+    has_any = False
+    for m in monetary:
+        amt = m.get("amount")
+        if amt is None:
+            continue
+        try:
+            total += Decimal(str(amt))
+            has_any = True
+        except Exception:
+            continue
+    return total if has_any else None
+
+
 def _asset_fingerprint(asset: dict[str, Any], kind: str) -> str:
     """Build a stable, coarse fingerprint for cross-year asset matching."""
     if kind == "re":
@@ -148,7 +163,13 @@ def _asset_fingerprint(asset: dict[str, Any], kind: str) -> str:
     brand = str(asset.get("brand") or "").strip().lower()
     model = str(asset.get("model") or "").strip().lower()
     year = str(asset.get("graduation_year") or asset.get("graduationYear") or "").strip()
-    owner = str(asset.get("owner_label") or asset.get("owner") or "").strip().lower()
+    owner = str(
+        asset.get("right_belongs_resolved")
+        or asset.get("right_belongs_raw")
+        or asset.get("owner_label")
+        or asset.get("owner")
+        or ""
+    ).strip().lower()
     return f"vh|{brand}|{model}|{year}|{owner}"
 
 
@@ -189,6 +210,12 @@ def _collect_major_assets(full: dict[str, Any]) -> dict[str, Decimal]:
 
 def _compute_one_off_income(incomes: list[dict[str, Any]]) -> Decimal:
     """Approximate one-off income (inheritance/sale/gift) for CR14 mitigation."""
+    one_off_keywords = (
+        # UA/RU/EN stems to keep matching conservative but language-tolerant.
+        "спад", "успад", "inherit",
+        "продаж", "продаж", "sale",
+        "дар", "дарув", "gift",
+    )
     total = Decimal(0)
     for i in incomes:
         txt = (
@@ -196,7 +223,7 @@ def _compute_one_off_income(incomes: list[dict[str, Any]]) -> Decimal:
             f"{i.get('source_type') or ''} "
             f"{i.get('income_type_other') or ''}"
         ).lower()
-        if not any(kw in txt for kw in ("спад", "inherit", "sale", "продаж", "gift", "дар")):
+        if not any(kw in txt for kw in one_off_keywords):
             continue
         amt = i.get("amount")
         if amt is None:
@@ -260,17 +287,26 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
     features = full.get("features") or {}
     bio = full.get("bio") or {}
 
-    total_monetary = _to_decimal(features.get("total_assets"))  # monetary only
+    total_monetary = None
+    cash = _to_decimal(features.get("cash"))
+    bank = _to_decimal(features.get("bank"))
+    if cash is not None or bank is not None:
+        total_monetary = (cash or Decimal(0)) + (bank or Decimal(0))
+    else:
+        total_monetary = _sum_monetary_amounts(full.get("monetary", []))
     total_real_estate = None  # not tracked separately in features yet
 
     # Compute combined total_assets for CR5
-    total_assets = total_monetary  # start with monetary
+    total_assets = total_monetary
     # Add real estate cost assessments if available
     re_total = Decimal(0)
     for r in full.get("real_estate", []):
         c = r.get("cost_assessment")
         if c is not None:
-            re_total += Decimal(str(c))
+            try:
+                re_total += Decimal(str(c))
+            except Exception:
+                continue
     if re_total > 0:
         total_real_estate = re_total
         total_assets = (total_assets or Decimal(0)) + re_total
@@ -293,8 +329,8 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
         total_monetary=total_monetary,
         total_real_estate=total_real_estate,
         total_assets=total_assets,
-        cash=_to_decimal(features.get("cash")),
-        bank=_to_decimal(features.get("bank")),
+        cash=cash,
+        bank=bank,
         income_count=len(full.get("incomes", [])),
         monetary_count=len(full.get("monetary", [])),
         real_estate_count=len(full.get("real_estate", [])),
@@ -401,7 +437,7 @@ def assemble_timeline(fulls: list[dict[str, Any]]) -> PersonTimeline | None:
         or "Unknown Official"
     )
 
-    # Build snapshots, deduplicate by year (keep highest-scored if multiple)
+    # Build snapshots, deduplicate by year.
     by_year: dict[int, YearlySnapshot] = {}
     for full in fulls:
         snap = _snapshot_from_full(full)

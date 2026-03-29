@@ -4,6 +4,7 @@ This file tracks implementation-focused milestones. For the full strategic plan,
 see `project_argus_consolidated_plan.md`.
 
 Operational crawl guidance: `docs/ingestion-runbook.md`.
+Release readiness checklist: `docs/release-checklist.md`.
 
 ## M1 - Data Pipeline Reliability
 
@@ -69,4 +70,4 @@ Goals:
 Exit criteria:
 - Root and frontend READMEs describe real project workflows. ✓
 - License file is present and referenced. ✓
-- Release checklist exists and is testable by a new contributor.
+- Release checklist exists and is testable by a new contributor. ✓ (`docs/release-checklist.md`)

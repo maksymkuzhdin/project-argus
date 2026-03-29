@@ -32,20 +32,24 @@ Then combined into a bounded overall score:
 
 ### Declaration-Level Rules
 
-- Data quality checks: `TQ1`, `TQ2`, `TQ3`, `TQ4`
-- Corruption and opacity checks: `CR1`, `CR2`, `CR3`, `CR4`, `CR6`, `CR7`, `CR8`, `CR9`, `CR10`, `CR11`, `CR13`
+- Data quality checks: `TQ1`, `TQ2`, `TQ3`, `TQ4`, `TQ5`
+- Corruption and opacity checks: `CR1`, `CR2`, `CR3`, `CR4`, `CR6`, `CR7`, `CR8`, `CR9`, `CR10`, `CR11`, `CR12`, `CR13`
 - Cohort outlier checks: `CR16` (when cohort stats are available)
+- Cohort opacity check: `BR3` (when cohort stats are available)
 
 ### Timeline Rules
 
 - Existing YOY rules: `yoy_income_change`, `yoy_asset_growth`, `foreign_cash_jump`
-- Added timeline checks: `CR5`, `BR2`, `BR4`
+- Added timeline checks: `CR5`, `CR14`, `CR15`, `BR1`, `BR2`, `BR4`
 
 Timeline scoring uses a weighted composite and the same bounded 0–100 mapping.
 
 ### Deferred Rules
 
-Rules requiring additional data model support or stronger cross-year identity resolution remain deferred (for example `CR12`, `CR14`, `CR15`, `BR1`, `BR3`).
+Remaining deferred scope is primarily:
+
+- Interaction bonus combinations not yet wired in scoring (`CR11 + CR12`, `CR14 + no one-off income`, `CR6 + CR15`).
+- CR6 cohort/region-relative thresholds (absolute thresholds are implemented; relative refinement is pending).
 
 ## Explanation Contract
 

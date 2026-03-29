@@ -1,19 +1,15 @@
-"""
-Project Argus — Deterministic anomaly scoring rules (Layer 1).
+"""Project Argus scoring rules.
 
-Each rule takes parsed declaration data and returns a ``RuleResult``
-with a numeric score contribution, a trigger flag, and a neutral-language
-explanation.
+This module implements deterministic declaration scoring and timeline scoring,
+including:
 
-Rules implemented (single-declaration analysis):
-    1. unexplained_wealth  — total assets vs total declared income
-    2. cash_to_bank_ratio  — cash proportions that exceed a threshold
-    3. unknown_value_freq  — fraction of fields marked unknown/confidential
-    4. acquisition_income_mismatch — real-estate cost vs declared income
+- data-quality checks (TQ*),
+- corruption/opacity checks (CR*/BR*) at declaration level,
+- timeline rules for multi-year behavior,
+- optional cohort-aware checks when cohort stats are provided.
 
-Rules deferred (require multi-year timeline):
-    - year_over_year_growth
-    - foreign_cash_jumps
+For the canonical implementation matrix and deferred items, see
+``docs/declaration-rules-and-checks.md``.
 """
 
 from __future__ import annotations
