@@ -138,7 +138,7 @@ Computed by the scoring pipeline.  One row per declaration.
 |--------|------|-------------|
 | `id` | int (PK) | Auto-increment primary key |
 | `declaration_id` | string (indexed) | Parent declaration UUID |
-| `total_score` | numeric | Composite anomaly score (0.0 – 1.0) |
+| `total_score` | numeric | Composite anomaly score (0.0 – 100.0) |
 | `triggered_rules` | string | Comma-separated list of triggered rule names |
 | `explanation_summary` | string | Human-readable summary of all triggered rules |
 | `rule_details_json` | string | Full JSON array of per-rule results |

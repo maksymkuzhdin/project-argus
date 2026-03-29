@@ -75,7 +75,7 @@ Query constraints:
 |---|---|---|
 | `limit` | int | 1–200 |
 | `offset` | int | 0–500000 |
-| `min_score` | float | 0.0–1.0 |
+| `min_score` | float | 0.0–100.0 |
 | `query` | string | max 120 chars |
 
 ### Declarations stats

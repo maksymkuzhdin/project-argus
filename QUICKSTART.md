@@ -114,7 +114,7 @@ npm run e2e        # Run end-to-end tests
 ```bash
 cd backend
 uvicorn app.main:app --reload                    # Dev server with auto-reload
-python -m pytest app/tests -q                    # Run unit tests (129 tests)
+python -m pytest app/tests -q                    # Run unit tests (155 tests)
 python scripts/run_scoring.py --layer2           # Run scoring pipeline
 ```
 

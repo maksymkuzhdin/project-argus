@@ -166,7 +166,7 @@ cd backend
 pytest app/tests -q
 ```
 
-Includes unit tests for cash classification, income parsing, ML scoring, API endpoint integration, and database query paths. **129 tests** covering normalization, features, scoring, and API contracts.
+Includes unit tests for cash classification, income parsing, ML scoring, API endpoint integration, and database query paths. **155 tests** covering normalization, features, scoring, and API contracts.
 
 ### Frontend Quality & E2E Tests
 

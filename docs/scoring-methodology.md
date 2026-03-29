@@ -1,103 +1,70 @@
 # Scoring Methodology
 
-Project Argus uses a layered anomaly scoring system. Every score is transparent and explainable; no profile is ever labelled "corrupt." Scores range from **0.0** (no anomaly signals) to **1.0** (maximum anomaly concentration).
+Project Argus uses a layered, explainable anomaly scoring system. The platform never labels a person as corrupt. Scores indicate review priority only.
 
-## Composite Score
+## Score Scale
 
-The composite score is the **sum of all individual rule scores, capped at 1.0**.  Each rule contributes independently and is designed so that a single mild flag does not dominate the total.
+- Declaration score (`total_score`) uses a native **0.0–100.0** scale.
+- Timeline score (`timeline_score.total_score`) also uses **0.0–100.0**.
+- Rule-level contributions are weighted points, not percentages.
 
-## Layer 1 — Deterministic Heuristics
+## Aggregation Model
 
-These rules run on a single declaration and require no cross-person or historical context.
+For declaration scoring, rules contribute weighted points:
 
-### Rule 1: `unexplained_wealth`
+`rule_points = base_weight * severity_multiplier * confidence`
 
-| Parameter | Default |
-|-----------|---------|
-| `threshold_ratio` | 3.0 |
+Raw aggregates are separated by category:
 
-**Logic:** Compares total declared assets (monetary assets + real estate cost assessments) against total declared income.
+- `corruption_risk_score`
+- `opacity_evasion_score`
+- `data_quality_score`
 
-- If `total_assets / total_income > threshold_ratio`, the rule triggers.
-- Score contribution: `min(1.0, (ratio - threshold) / threshold)` — scales linearly from the threshold up to 2x the threshold.
-- Special case: assets declared with zero or negative income yields a score of 1.0.
+Then combined into a bounded overall score:
 
-**Rationale:** A large gap between declared income and declared wealth may indicate income sources not captured in the declaration.
+`raw_total = corruption + 0.5 * opacity + 0.1 * capped_data_quality + interaction_bonus`
 
-### Rule 2: `cash_to_bank_ratio`
+`total_score = 100 * (1 - exp(-raw_total / 12))`
 
-| Parameter | Default |
-|-----------|---------|
-| `threshold` | 0.80 |
+`data_quality_score` is capped to reduce technical-noise dominance.
 
-**Logic:** Calculates cash as a share of total liquid monetary assets (cash + bank deposits).  Excludes non-liquid monetary items (crypto, loans, etc.).
+## Implemented Rule Layers
 
-- If `cash / (cash + bank) > threshold`, the rule triggers.
-- Score contribution: `min(1.0, (ratio - threshold) / (1.0 - threshold))`.
+### Declaration-Level Rules
 
-**Rationale:** An unusually high proportion of cash relative to banked assets may indicate preference for less-traceable wealth storage.
+- Data quality checks: `TQ1`, `TQ2`, `TQ3`, `TQ4`
+- Corruption and opacity checks: `CR1`, `CR2`, `CR3`, `CR4`, `CR6`, `CR7`, `CR8`, `CR9`, `CR10`, `CR11`, `CR13`
+- Cohort outlier checks: `CR16` (when cohort stats are available)
 
-### Rule 3: `unknown_value_frequency`
+### Timeline Rules
 
-| Parameter | Default |
-|-----------|---------|
-| `threshold` | 0.30 |
+- Existing YOY rules: `yoy_income_change`, `yoy_asset_growth`, `foreign_cash_jump`
+- Added timeline checks: `CR5`, `BR2`, `BR4`
 
-**Logic:** Counts how many value fields across income, monetary assets, and real estate carry a placeholder status (unknown, confidential, family_no_info) rather than an actual numeric value.
+Timeline scoring uses a weighted composite and the same bounded 0–100 mapping.
 
-- If `unknown_fields / total_fields > threshold`, the rule triggers.
-- Score contribution: `min(1.0, (freq - threshold) / (1.0 - threshold))`.
+### Deferred Rules
 
-**Rationale:** Excessive use of "unknown" or "confidential" placeholders in value fields — beyond standard PII redaction — reduces the transparency of a declaration.
+Rules requiring additional data model support or stronger cross-year identity resolution remain deferred (for example `CR12`, `CR14`, `CR15`, `BR1`, `BR3`).
 
-### Rule 4: `acquisition_income_mismatch`
+## Explanation Contract
 
-| Parameter | Default |
-|-----------|---------|
-| `threshold_ratio` | 1.5 |
+Each triggered rule provides:
 
-**Logic:** Compares the single largest real estate cost assessment against total declared income.
+- `rule_name`
+- `score`
+- `triggered`
+- `explanation`
+- `category` (when available)
+- `severity` (when available)
+- `confidence` (when available)
 
-- If `largest_acquisition / total_income > threshold_ratio`, the rule triggers.
-- Score contribution: `min(1.0, (ratio - threshold) / threshold)`.
-- Special case: acquisition with zero/negative income yields 1.0.
+This keeps outputs transparent for API consumers and UI rendering.
 
-**Rationale:** A single property purchase that significantly exceeds annual declared income may warrant review.
+## Layer 3 (ML)
 
-## Layer 2 — Statistical Cohort Analysis (Implemented)
+Unsupervised ML is still deferred. Planned additions remain:
 
-Layer 2 adds role/year cohort context on top of deterministic rules.
-
-### Rule 5: `cohort_income_outlier`
-
-Compares declaration income to cohort percentile boundaries (same post type and year).
-
-### Rule 6: `cohort_wealth_outlier`
-
-Compares declaration monetary/wealth totals to cohort percentile boundaries.
-
-These rules are additive context signals and do not replace deterministic flags.
-
-## Multi-year Timeline Rules (Implemented)
-
-These rules operate on person timelines across declarations.
-
-### Rule 7: `yoy_income_change`
-
-Flags abrupt year-over-year income spikes/drops.
-
-### Rule 8: `yoy_asset_growth`
-
-Flags unusually large year-over-year monetary growth relative to prior baseline.
-
-### Rule 9: `foreign_cash_jump`
-
-Flags sudden growth in cash holdings suggestive of unusual liquidity shifts.
-
-## Layer 3 — Unsupervised ML
-
-*Not yet implemented.* Planned features:
-
-- Isolation Forest for multivariate outlier detection across all computed features.
-- Optional autoencoder for reconstruction-error-based anomaly scoring.
-- ML signals will supplement, not replace, deterministic and statistical layers.
+- Isolation Forest
+- Optional autoencoder
+- ML as additive context, never a replacement for deterministic explainable rules
