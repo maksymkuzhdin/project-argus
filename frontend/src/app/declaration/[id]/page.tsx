@@ -82,6 +82,16 @@ type AggregatedRealEstate = {
     owners: string[];
 };
 
+type AggregatedVehicle = {
+    key: string;
+    type: string;
+    brandModel: string;
+    modelYear: string;
+    acquiredYear: string;
+    declaredValue: string;
+    owners: string[];
+};
+
 function aggregateRealEstate(items: Record<string, unknown>[]): AggregatedRealEstate[] {
     const groups = new Map<string, AggregatedRealEstate>();
 
@@ -133,6 +143,52 @@ function aggregateRealEstate(items: Record<string, unknown>[]): AggregatedRealEs
     return Array.from(groups.values());
 }
 
+function aggregateVehicles(items: Record<string, unknown>[]): AggregatedVehicle[] {
+    const groups = new Map<string, AggregatedVehicle>();
+
+    for (const item of items) {
+        const type = formatField(item.object_type).trim() || "—";
+        const brand = formatField(item.brand).trim();
+        const model = formatField(item.model).trim();
+        const brandModel = [brand, model].filter(Boolean).join(" ") || "—";
+        const modelYear = formatField(item.graduation_year).trim() || "—";
+        const acquiredYear = extractYear(item.owning_date);
+        const declaredValue = formatNumberLike(item.cost_date);
+
+        const key = [
+            type,
+            brandModel,
+            modelYear,
+            acquiredYear,
+            declaredValue,
+        ].join("|");
+
+        const owner = formatField(item.right_belongs_resolved).trim() || "Unknown owner";
+        const ownershipType = formatField(item.ownership_type).trim();
+        const ownerLabel = [owner, ownershipType ? `(${ownershipType})` : ""].filter(Boolean).join(" ");
+
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                type,
+                brandModel,
+                modelYear,
+                acquiredYear,
+                declaredValue,
+                owners: [ownerLabel],
+            });
+            continue;
+        }
+
+        const existing = groups.get(key)!;
+        if (!existing.owners.includes(ownerLabel)) {
+            existing.owners.push(ownerLabel);
+        }
+    }
+
+    return Array.from(groups.values());
+}
+
 export default async function DeclarationDetail({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
     let data: DeclarationDetail | null = null;
@@ -167,7 +223,9 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
     const realEstateItems = (data.real_estate as Record<string, unknown>[]) || [];
     const familyMembers = (data.family_members as Record<string, unknown>[]) || [];
     const incomes = (data.incomes as Record<string, unknown>[]) || [];
+    const vehicleItems = (data.vehicles as Record<string, unknown>[]) || [];
     const aggregatedRealEstate = aggregateRealEstate(realEstateItems);
+    const aggregatedVehicles = aggregateVehicles(vehicleItems);
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -381,26 +439,34 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                 )}
 
                 {/* Vehicles */}
-                {Array.isArray(data.vehicles) && data.vehicles.length > 0 && (
+                {aggregatedVehicles.length > 0 && (
                     <section>
                         <h2 className="text-xl font-semibold text-zinc-100 mb-4">Vehicles</h2>
                         <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
                             <table className="w-full text-left text-sm text-zinc-400">
                                 <thead className="bg-zinc-900/50 text-zinc-500 border-b border-zinc-800">
                                     <tr>
+                                        <th className="px-6 py-3 font-medium">Type</th>
                                         <th className="px-6 py-3 font-medium">Brand & Model</th>
-                                        <th className="px-6 py-3 font-medium">Year</th>
-                                        <th className="px-6 py-3 font-medium">Owner</th>
-                                        <th className="px-6 py-3 font-medium">Ownership Type</th>
+                                        <th className="px-6 py-3 font-medium">Model Year</th>
+                                        <th className="px-6 py-3 font-medium">Acquired</th>
+                                        <th className="px-6 py-3 font-medium text-right">Declared Value</th>
+                                        <th className="px-6 py-3 font-medium">Owners / Rights</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {data.vehicles.map((item: Record<string, unknown>, i: number) => (
-                                        <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
-                                            <td className="px-6 py-3 text-zinc-300">{formatField(item.brand)} {formatField(item.model)}</td>
-                                            <td className="px-6 py-3 font-mono">{formatField(item.graduation_year)}</td>
-                                            <td className="px-6 py-3 text-emerald-400/80">{formatField(item.right_belongs_resolved)}</td>
-                                            <td className="px-6 py-3">{formatField(item.ownership_type)}</td>
+                                    {aggregatedVehicles.map((item) => (
+                                        <tr key={item.key} className="hover:bg-zinc-800/20 transition-colors align-top">
+                                            <td className="px-6 py-3">{item.type}</td>
+                                            <td className="px-6 py-3 text-zinc-300">{item.brandModel}</td>
+                                            <td className="px-6 py-3 font-mono">{item.modelYear}</td>
+                                            <td className="px-6 py-3 font-mono">{item.acquiredYear}</td>
+                                            <td className="px-6 py-3 text-right font-mono text-zinc-300">{item.declaredValue}</td>
+                                            <td className="px-6 py-3 text-emerald-400/80">
+                                                {item.owners.map((owner, idx) => (
+                                                    <div key={`${item.key}-owner-${idx}`}>{owner}</div>
+                                                ))}
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
