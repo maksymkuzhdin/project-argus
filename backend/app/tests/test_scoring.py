@@ -567,6 +567,170 @@ class TestBR3CohortConfidentialDensity:
         assert "BR3" not in result.triggered_rules
 
 
+# ── CR6 cohort-relative refinement ──────────────────────────────────────
+
+class TestCR6CohortRefinement:
+    """CR6 uses relative thresholds when valid cohort distributions are present,
+    falling back to absolute thresholds otherwise."""
+
+    # ---- helpers ----
+
+    def _cohort(self, dwelling_areas, agri_areas):
+        return SimpleNamespace(
+            incomes=[],
+            assets=[],
+            cash_ratios=[],
+            confidential_ratios=[],
+            dwelling_areas=sorted(dwelling_areas),
+            agri_areas=sorted(agri_areas),
+        )
+
+    def _base_call(self, real_estate, cohort_stats):
+        return score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("1000000"),
+            cash_holdings=Decimal("50000"),
+            bank_deposits=Decimal("100000"),
+            incomes=[{"amount": "400000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=[],
+            real_estate=real_estate,
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=cohort_stats,
+        )
+
+    # ---- relative mode: dwelling ----
+
+    def test_cr6_relative_dwelling_high_at_p99(self):
+        """Dwelling area at 99th percentile of cohort → HIGH (relative mode)."""
+        # 90 peers with areas 100-990 m2; our declarant at 1500 m2 (top 1%)
+        areas = [float(i * 10) for i in range(10, 100)]  # 100-990
+        cohort = self._cohort(areas, [])
+        real_estate = [
+            {"object_type": "Квартира", "total_area": "1500"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any(r.severity == "HIGH" for r in cr6_flags)
+        assert any("relative mode" in r.explanation for r in cr6_flags)
+
+    def test_cr6_relative_dwelling_medium_at_p95(self):
+        """Dwelling area at 95th–99th percentile of cohort → MEDIUM (relative mode)."""
+        # 100 peers 50-995 m2; declarant at 960 m2 (~96th percentile)
+        areas = [float(i * 10) for i in range(5, 100)]  # 50-990
+        cohort = self._cohort(areas, [])
+        real_estate = [
+            {"object_type": "Квартира", "total_area": "960"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any(r.severity == "MEDIUM" for r in cr6_flags)
+        assert any("relative mode" in r.explanation for r in cr6_flags)
+
+    def test_cr6_relative_dwelling_no_trigger_below_p95(self):
+        """Dwelling area below 95th percentile of cohort → no CR6 trigger."""
+        # Peers 100-990 m2; declarant at 300 m2 (~21st percentile)
+        areas = [float(i * 10) for i in range(10, 100)]
+        cohort = self._cohort(areas, [])
+        real_estate = [
+            {"object_type": "Квартира", "total_area": "300"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" not in result.triggered_rules
+
+    # ---- relative mode: agricultural ----
+
+    def test_cr6_relative_agri_high_at_p99(self):
+        """Agricultural area at 99th percentile of cohort → HIGH (relative mode)."""
+        # 90 peers 1000-9900 m2; declarant at 50000 m2 (top 1%)
+        agri = [float(i * 100) for i in range(10, 100)]
+        cohort = self._cohort([], agri)
+        real_estate = [
+            {"object_type": "Земельна ділянка", "total_area": "50000"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any(r.severity == "HIGH" for r in cr6_flags)
+        assert any("relative mode" in r.explanation for r in cr6_flags)
+
+    def test_cr6_relative_agri_medium_at_p95(self):
+        """Agricultural area at 95th–99th percentile of cohort → MEDIUM (relative mode)."""
+        agri = [float(i * 100) for i in range(5, 100)]  # 500-9900 m2
+        cohort = self._cohort([], agri)
+        # 9600 m2 ≈ 96th percentile of the above distribution
+        real_estate = [
+            {"object_type": "Земельна ділянка", "total_area": "9600"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any(r.severity == "MEDIUM" for r in cr6_flags)
+        assert any("relative mode" in r.explanation for r in cr6_flags)
+
+    # ---- fallback: no cohort ----
+
+    def test_cr6_absolute_fallback_when_no_cohort_stats(self):
+        """Without cohort_stats, CR6 uses absolute thresholds [absolute mode]."""
+        real_estate = [
+            {"object_type": "Квартира", "total_area": "500"}
+        ]
+        result = self._base_call(real_estate, cohort_stats=None)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any("absolute mode" in r.explanation for r in cr6_flags)
+
+    def test_cr6_absolute_fallback_when_cohort_too_small(self):
+        """With fewer than 5 values in cohort, CR6 uses absolute thresholds."""
+        cohort = self._cohort([100.0, 200.0, 300.0], [])  # only 3 values
+        real_estate = [
+            {"object_type": "Квартира", "total_area": "500"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any("absolute mode" in r.explanation for r in cr6_flags)
+
+    def test_cr6_absolute_fallback_agri_when_no_agri_dist(self):
+        """Cohort has dwelling data only; agri falls back to absolute thresholds."""
+        areas = [float(i * 10) for i in range(10, 100)]
+        cohort = self._cohort(areas, [])  # no agri distribution
+        real_estate = [
+            {"object_type": "Земельна ділянка", "total_area": "600000"}
+        ]
+        result = self._base_call(real_estate, cohort)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any("absolute mode" in r.explanation for r in cr6_flags)
+
+    # ---- regression: absolute thresholds still fire without cohort ----
+
+    def test_cr6_absolute_dwelling_high_no_cohort(self):
+        """Absolute HIGH threshold (> 400 m2) still fires without cohort."""
+        real_estate = [{"object_type": "Квартира", "total_area": "450"}]
+        result = self._base_call(real_estate, cohort_stats=None)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any(r.severity == "HIGH" for r in cr6_flags)
+
+    def test_cr6_absolute_dwelling_medium_no_cohort(self):
+        """Absolute MEDIUM threshold (250–400 m2) still fires without cohort."""
+        real_estate = [{"object_type": "Квартира", "total_area": "300"}]
+        result = self._base_call(real_estate, cohort_stats=None)
+        assert "CR6" in result.triggered_rules
+        cr6_flags = [r for r in result.rule_results if r.rule_name == "CR6"]
+        assert any(r.severity == "MEDIUM" for r in cr6_flags)
+
+    def test_cr6_no_trigger_small_area_no_cohort(self):
+        """Area below absolute thresholds does not trigger CR6 without cohort."""
+        real_estate = [{"object_type": "Квартира", "total_area": "100"}]
+        result = self._base_call(real_estate, cohort_stats=None)
+        assert "CR6" not in result.triggered_rules
+
+
 # ── Timeline scoring integration ────────────────────────────────────────
 
 class TestTimelineScoringIntegration:

@@ -38,6 +38,8 @@ class CohortStats:
     assets: list[float] = field(default_factory=list)
     cash_ratios: list[float] = field(default_factory=list)
     confidential_ratios: list[float] = field(default_factory=list)
+    dwelling_areas: list[float] = field(default_factory=list)
+    agri_areas: list[float] = field(default_factory=list)
 
     @property
     def size(self) -> int:
@@ -49,6 +51,8 @@ class CohortStats:
         self.assets.sort()
         self.cash_ratios.sort()
         self.confidential_ratios.sort()
+        self.dwelling_areas.sort()
+        self.agri_areas.sort()
 
 
 @dataclass
@@ -115,6 +119,14 @@ def build_cohort_distributions(
         conf = s.get("confidential_ratio")
         if conf is not None:
             stats.confidential_ratios.append(float(conf))
+
+        dwell = s.get("dwelling_area")
+        if dwell is not None:
+            stats.dwelling_areas.append(float(dwell))
+
+        agri = s.get("agri_area")
+        if agri is not None:
+            stats.agri_areas.append(float(agri))
 
     # Freeze (sort) and filter small cohorts
     result = {}
