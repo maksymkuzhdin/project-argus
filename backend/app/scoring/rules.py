@@ -21,6 +21,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.normalization.currency import to_uah
+from app.scoring.cohorts import compute_percentile_rank, get_percentile_value
 
 
 # ---------------------------------------------------------------------------
@@ -1106,42 +1107,109 @@ def score_declaration(
             dwelling_area += Decimal(area)
         if "зем" in obj:
             agri_area += Decimal(area)
-    if dwelling_area > Decimal("400"):
-        flags.append(_make_flag(
-            rule_id="CR6",
-            category="corruption",
-            severity="HIGH",
-            base_weight=3,
-            confidence=0.8,
-            message=f"Total dwelling area is {dwelling_area:,.0f} m2 (> 400 m2).",
-        ))
-    elif dwelling_area > Decimal("250"):
-        flags.append(_make_flag(
-            rule_id="CR6",
-            category="corruption",
-            severity="MEDIUM",
-            base_weight=3,
-            confidence=0.8,
-            message=f"Total dwelling area is {dwelling_area:,.0f} m2 (> 250 m2).",
-        ))
-    if agri_area > Decimal("500000"):
-        flags.append(_make_flag(
-            rule_id="CR6",
-            category="corruption",
-            severity="HIGH",
-            base_weight=3,
-            confidence=0.8,
-            message=f"Agricultural land area is {agri_area:,.0f} m2 (> 50 ha).",
-        ))
-    elif agri_area > Decimal("100000"):
-        flags.append(_make_flag(
-            rule_id="CR6",
-            category="corruption",
-            severity="MEDIUM",
-            base_weight=3,
-            confidence=0.8,
-            message=f"Agricultural land area is {agri_area:,.0f} m2 (> 10 ha).",
-        ))
+    # CR6 — Dwelling area: relative thresholds when cohort data is available,
+    # otherwise fall back to absolute thresholds.
+    _dwelling_dist = list(getattr(cohort_stats, "dwelling_areas", [])) if cohort_stats is not None else []
+    if len(_dwelling_dist) >= 5 and dwelling_area > Decimal(0):
+        _dw_pct = compute_percentile_rank(float(dwelling_area), _dwelling_dist)
+        _dw_p95 = get_percentile_value(_dwelling_dist, 0.95)
+        if _dw_pct >= 0.99:
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="HIGH",
+                base_weight=3,
+                confidence=0.8,
+                message=(
+                    f"Total dwelling area is {dwelling_area:,.0f} m2 "
+                    f"({_dw_pct:.0%} percentile of cohort peers, P95 = {_dw_p95:,.0f} m2) "
+                    f"[relative mode]."
+                ),
+            ))
+        elif _dw_pct >= 0.95:
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=3,
+                confidence=0.8,
+                message=(
+                    f"Total dwelling area is {dwelling_area:,.0f} m2 "
+                    f"({_dw_pct:.0%} percentile of cohort peers, P95 = {_dw_p95:,.0f} m2) "
+                    f"[relative mode]."
+                ),
+            ))
+    else:
+        if dwelling_area > Decimal("400"):
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="HIGH",
+                base_weight=3,
+                confidence=0.8,
+                message=f"Total dwelling area is {dwelling_area:,.0f} m2 (> 400 m2) [absolute mode].",
+            ))
+        elif dwelling_area > Decimal("250"):
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=3,
+                confidence=0.8,
+                message=f"Total dwelling area is {dwelling_area:,.0f} m2 (> 250 m2) [absolute mode].",
+            ))
+
+    # CR6 — Agricultural area: relative thresholds when cohort data is available,
+    # otherwise fall back to absolute thresholds.
+    _agri_dist = list(getattr(cohort_stats, "agri_areas", [])) if cohort_stats is not None else []
+    if len(_agri_dist) >= 5 and agri_area > Decimal(0):
+        _ag_pct = compute_percentile_rank(float(agri_area), _agri_dist)
+        _ag_p95 = get_percentile_value(_agri_dist, 0.95)
+        if _ag_pct >= 0.99:
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="HIGH",
+                base_weight=3,
+                confidence=0.8,
+                message=(
+                    f"Agricultural land area is {agri_area:,.0f} m2 "
+                    f"({_ag_pct:.0%} percentile of cohort peers, P95 = {_ag_p95:,.0f} m2) "
+                    f"[relative mode]."
+                ),
+            ))
+        elif _ag_pct >= 0.95:
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=3,
+                confidence=0.8,
+                message=(
+                    f"Agricultural land area is {agri_area:,.0f} m2 "
+                    f"({_ag_pct:.0%} percentile of cohort peers, P95 = {_ag_p95:,.0f} m2) "
+                    f"[relative mode]."
+                ),
+            ))
+    else:
+        if agri_area > Decimal("500000"):
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="HIGH",
+                base_weight=3,
+                confidence=0.8,
+                message=f"Agricultural land area is {agri_area:,.0f} m2 (> 50 ha) [absolute mode].",
+            ))
+        elif agri_area > Decimal("100000"):
+            flags.append(_make_flag(
+                rule_id="CR6",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=3,
+                confidence=0.8,
+                message=f"Agricultural land area is {agri_area:,.0f} m2 (> 10 ha) [absolute mode].",
+            ))
 
     luxury_count = 0
     for v in vehicles:
@@ -1352,8 +1420,6 @@ def score_declaration(
     # CR16 — Cohort-relative outliers
     # ------------------------------
     if cohort_stats is not None:
-        from app.scoring.cohorts import compute_percentile_rank, get_percentile_value
-
         # Income outlier — top 1% of cohort
         if inc_val is not None and len(getattr(cohort_stats, 'incomes', [])) >= 5:
             pct = compute_percentile_rank(float(inc_val), cohort_stats.incomes)
