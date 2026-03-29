@@ -72,6 +72,10 @@ function resolveIncomeRecipient(personRef: unknown, familyMembers: Record<string
     return relation || fullName || `Person ${ref}`;
 }
 
+function resolveAssetOwner(personRef: unknown, familyMembers: Record<string, unknown>[]): string {
+    return resolveIncomeRecipient(personRef, familyMembers);
+}
+
 type AggregatedRealEstate = {
     key: string;
     objectType: string;
@@ -539,6 +543,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                             <table className="w-full text-left text-sm text-zinc-400">
                                 <thead className="bg-zinc-900/50 text-zinc-500 border-b border-zinc-800">
                                     <tr>
+                                        <th className="px-6 py-3 font-medium">Owner</th>
                                         <th className="px-6 py-3 font-medium">Type</th>
                                         <th className="px-6 py-3 font-medium">Organization</th>
                                         <th className="px-6 py-3 font-medium text-right">Amount</th>
@@ -548,6 +553,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                                 <tbody className="divide-y divide-zinc-800/50">
                                     {data.monetary.map((item: Record<string, unknown>, i: number) => (
                                         <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
+                                            <td className="px-6 py-3 text-emerald-400/80">{resolveAssetOwner(item.person_ref, familyMembers)}</td>
                                             <td className="px-6 py-3">{formatField(item.asset_type)}</td>
                                             <td className="px-6 py-3">
                                                 {formatField(item.organization)}
