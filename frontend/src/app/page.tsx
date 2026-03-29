@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { fetchDeclarations, fetchStats, type DeclarationSummary } from "@/lib/api";
 import RuleDistributionChart from "@/components/RuleDistributionChart";
+import { getScoreBand } from "@/lib/scoreBands";
 
 export const revalidate = 0; // Disable static rendering for the dashboard
 
@@ -107,6 +108,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
             <div className="text-zinc-500 text-sm font-medium mb-1">Avg Anomaly Score</div>
             <div className="text-3xl font-semibold text-zinc-100">{stats.average_score.toFixed(1)}</div>
+            <div className="text-xs text-zinc-600 mt-1">Scale: 0 to 100</div>
           </div>
         </div>
 
@@ -141,8 +143,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50">
-                {declarations.items.map((decl) => (
-                  <tr key={decl.declaration_id} className="hover:bg-zinc-800/20 transition-colors">
+                {declarations.items.map((decl) => {
+                  const scoreBand = getScoreBand(decl.score);
+                  return (
+                    <tr key={decl.declaration_id} className="hover:bg-zinc-800/20 transition-colors">
                     <td className="px-6 py-4">
                       <Link
                         href={`/declaration?id=${decl.declaration_id}`}
@@ -185,12 +189,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                       )}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className={`font-mono font-medium ${decl.score > 0 ? "text-amber-500" : "text-emerald-500"}`}>
+                      <div className={`font-mono font-medium ${scoreBand.textClass}`}>
                         {decl.score.toFixed(1)}
                       </div>
+                      <div className="mt-1">
+                        <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-medium ${scoreBand.badgeClass}`}>
+                          {scoreBand.label}
+                        </span>
+                      </div>
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
 
                 {declarations.items.length === 0 && (
                   <tr>

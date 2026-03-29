@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { fetchPersonTimeline } from "@/lib/api";
+import { getScoreBand } from "@/lib/scoreBands";
 
 export const revalidate = 0;
 
@@ -50,6 +51,8 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
     );
   }
 
+  const scoreBand = getScoreBand(data.timeline_score.total_score);
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
       <section className="max-w-6xl mx-auto space-y-8">
@@ -64,7 +67,12 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
 
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
           <h2 className="text-lg font-semibold text-zinc-100 mb-3">Timeline Score</h2>
-          <div className="text-4xl font-mono font-bold text-amber-500">{data.timeline_score.total_score.toFixed(1)}</div>
+          <div className={`text-4xl font-mono font-bold ${scoreBand.textClass}`}>{data.timeline_score.total_score.toFixed(1)}</div>
+          <div className="mt-2">
+            <span className={`inline-flex items-center justify-center rounded-full px-2.5 py-0.5 text-xs font-medium ${scoreBand.badgeClass}`}>
+              {scoreBand.label}
+            </span>
+          </div>
           {data.timeline_score.triggered_rules.length > 0 ? (
             <ul className="mt-4 text-sm text-zinc-300 space-y-2">
               {data.timeline_score.triggered_rules.map((rule) => (

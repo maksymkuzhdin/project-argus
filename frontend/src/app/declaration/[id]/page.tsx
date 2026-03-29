@@ -2,6 +2,7 @@ import Link from "next/link";
 import { fetchDeclaration, type DeclarationDetail } from "@/lib/api";
 import IncomeAssetsChart from "@/components/IncomeAssetsChart";
 import ScoreBreakdownChart from "@/components/ScoreBreakdownChart";
+import { getScoreBand } from "@/lib/scoreBands";
 
 export const revalidate = 0;
 
@@ -54,6 +55,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
     const summary = data.summary;
     const bio = data.bio;
     const rawMetadata = data.raw_metadata;
+    const scoreBand = getScoreBand(Number(summary.score || 0));
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -94,8 +96,13 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                         </div>
                         <div className="text-right">
                             <div className="text-sm text-zinc-500 mb-1">Anomaly Score</div>
-                            <div className={`text-4xl font-mono font-bold ${summary.score > 0 ? "text-amber-500" : "text-emerald-500"}`}>
-                                {formatField(summary.score)}
+                            <div className={`text-4xl font-mono font-bold ${scoreBand.textClass}`}>
+                                {Number(summary.score || 0).toFixed(1)}
+                            </div>
+                            <div className="mt-2">
+                                <span className={`inline-flex items-center justify-center rounded-full px-2.5 py-0.5 text-xs font-medium ${scoreBand.badgeClass}`}>
+                                    {scoreBand.label}
+                                </span>
                             </div>
                         </div>
                     </div>
