@@ -28,11 +28,16 @@ function getMultiYearEligibility(declarations: DeclarationSummary[]): Set<number
   return eligible;
 }
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ page?: string; query?: string }> }) {
+export default async function Home({ searchParams }: { searchParams: Promise<{ page?: string; query?: string; sort_by?: string; sort_dir?: string }> }) {
   const resolvedParams = await searchParams;
-  const page = parseInt(resolvedParams.page || "1", 10);
+  const parsedPage = parseInt(resolvedParams.page || "1", 10);
+  const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const offset = (page - 1) * 50;
   const query = resolvedParams.query || "";
+  const rawSortBy = (resolvedParams as Record<string, string | undefined>).sort_by || "score";
+  const rawSortDir = (resolvedParams as Record<string, string | undefined>).sort_dir || "desc";
+  const sortBy = ["score", "income", "assets", "name", "year"].includes(rawSortBy) ? rawSortBy : "score";
+  const sortDir = rawSortDir === "asc" ? "asc" : "desc";
 
   let loadError: string | null = null;
   let stats;
@@ -40,7 +45,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
 
   try {
     stats = await fetchStats();
-    declarations = await fetchDeclarations(50, offset, 0, query);
+    declarations = await fetchDeclarations(50, offset, 0, query, sortBy, sortDir);
   } catch (err: unknown) {
     loadError = err instanceof Error ? err.message : "Failed to load dashboard data.";
   }
@@ -66,6 +71,16 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
 
   // Build eligibility set by checking across all pages (limited to current page for efficiency)
   const multiYearEligible = getMultiYearEligibility(declarations.items);
+  const totalPages = Math.max(1, Math.ceil(declarations.total / declarations.limit));
+  const buildPageHref = (targetPage: number) => {
+    const params = new URLSearchParams({
+      page: String(targetPage),
+      sort_by: sortBy,
+      sort_dir: sortDir,
+    });
+    if (query) params.set("query", query);
+    return `/?${params.toString()}`;
+  };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -122,13 +137,34 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
 
         {/* Declarations Table */}
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <h2 className="text-xl font-semibold text-zinc-100">Analyzed Declarations</h2>
-            <form action="/" method="GET" className="flex gap-2">
+            <form action="/" method="GET" className="flex flex-wrap gap-2 justify-end">
+              <input type="hidden" name="page" value="1" />
+              <input type="hidden" name="sort_by" value={sortBy} />
+              <input type="hidden" name="sort_dir" value={sortDir} />
               <input type="text" name="query" defaultValue={query} placeholder="Search name or org..." className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500" />
               <button type="submit" className="bg-amber-500 text-zinc-950 rounded-md px-4 py-1.5 text-sm font-medium hover:bg-amber-400 transition-colors">Search</button>
             </form>
           </div>
+
+          <form action="/" method="GET" className="flex flex-wrap items-center gap-2 text-sm">
+            <input type="hidden" name="page" value="1" />
+            <input type="hidden" name="query" value={query} />
+            <label htmlFor="sort_by" className="text-zinc-500">Sort by</label>
+            <select id="sort_by" name="sort_by" defaultValue={sortBy} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-amber-500">
+              <option value="score">Score</option>
+              <option value="income">Income</option>
+              <option value="assets">Assets</option>
+              <option value="name">Name</option>
+              <option value="year">Year</option>
+            </select>
+            <select id="sort_dir" name="sort_dir" defaultValue={sortDir} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-amber-500">
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+            <button type="submit" className="bg-zinc-800 text-zinc-100 rounded-md px-3 py-1.5 hover:bg-zinc-700 transition-colors">Apply Sort</button>
+          </form>
 
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden" data-testid="declarations-list">
             <table className="w-full text-left text-sm">
@@ -219,9 +255,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
           <div className="text-sm text-zinc-500">
             Showing <span className="text-zinc-300 font-medium">{declarations.items.length > 0 ? offset + 1 : 0}</span> to <span className="text-zinc-300 font-medium">{offset + declarations.items.length}</span> of <span className="text-zinc-300 font-medium">{declarations.total}</span>
           </div>
-          <div className="flex gap-2 text-sm font-medium">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
             {page > 1 ? (
-              <Link href={`/?page=${page - 1}${query ? `&query=${encodeURIComponent(query)}` : ''}`} className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer">
+              <Link href={buildPageHref(page - 1)} className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer">
                 Previous
               </Link>
             ) : (
@@ -231,7 +267,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
             )}
 
             {offset + declarations.items.length < declarations.total ? (
-              <Link href={`/?page=${page + 1}${query ? `&query=${encodeURIComponent(query)}` : ''}`} className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer">
+              <Link href={buildPageHref(page + 1)} className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer">
                 Next
               </Link>
             ) : (
@@ -239,6 +275,26 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                 Next
               </span>
             )}
+
+            <form action="/" method="GET" className="flex items-center gap-2 ml-2">
+              <input type="hidden" name="query" value={query} />
+              <input type="hidden" name="sort_by" value={sortBy} />
+              <input type="hidden" name="sort_dir" value={sortDir} />
+              <label htmlFor="page" className="text-zinc-500">Go to page</label>
+              <input
+                id="page"
+                type="number"
+                name="page"
+                min={1}
+                max={totalPages}
+                defaultValue={page}
+                className="w-24 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-amber-500"
+              />
+              <button type="submit" className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-md text-zinc-200 hover:bg-zinc-700 transition-colors">
+                Go
+              </button>
+              <span className="text-zinc-500">/ {totalPages}</span>
+            </form>
           </div>
         </div>
       </section>

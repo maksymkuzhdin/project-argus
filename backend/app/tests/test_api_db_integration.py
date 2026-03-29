@@ -176,6 +176,27 @@ def test_db_path_list_and_stats() -> None:
         app.dependency_overrides.clear()
 
 
+def test_db_path_list_supports_sorting() -> None:
+    client = _make_client()
+    try:
+        score_asc = client.get("/api/declarations?limit=10&sort_by=score&sort_dir=asc")
+        assert score_asc.status_code == 200
+        score_payload = score_asc.json()
+        assert score_payload["items"][0]["declaration_id"] == "doc-1"
+
+        income_desc = client.get("/api/declarations?limit=10&sort_by=income&sort_dir=desc")
+        assert income_desc.status_code == 200
+        income_payload = income_desc.json()
+        assert income_payload["items"][0]["declaration_id"] == "doc-2"
+
+        income_asc = client.get("/api/declarations?limit=10&sort_by=income&sort_dir=asc")
+        assert income_asc.status_code == 200
+        income_asc_payload = income_asc.json()
+        assert income_asc_payload["items"][0]["declaration_id"] == "doc-1"
+    finally:
+        app.dependency_overrides.clear()
+
+
 
 def test_db_path_declaration_detail_and_person_timeline() -> None:
     client = _make_client()

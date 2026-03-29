@@ -127,12 +127,16 @@ export async function fetchDeclarations(
     limit = 50,
     offset = 0,
     minScore = 0.0,
-    query = ''
+    query = '',
+    sortBy = 'score',
+    sortDir = 'desc'
 ): Promise<PaginatedDeclarations> {
     const params = new URLSearchParams({
         limit: limit.toString(),
         offset: offset.toString(),
         min_score: minScore.toString(),
+        sort_by: sortBy,
+        sort_dir: sortDir,
     });
     if (query) {
         params.append('query', query);

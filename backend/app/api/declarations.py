@@ -303,13 +303,24 @@ def list_declarations(
     offset: int = Query(default=0, ge=0, le=500000),
     min_score: float = Query(default=0.0, ge=0.0, le=100.0),
     query: str | None = Query(default=None, max_length=120),
+    sort_by: str = Query(default="score"),
+    sort_dir: str = Query(default="desc"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Paginated list of declaration summaries."""
 
+    allowed_sort_fields = {"score", "income", "assets", "name", "year"}
+    sort_by = sort_by.lower().strip()
+    if sort_by not in allowed_sort_fields:
+        sort_by = "score"
+
+    sort_dir = sort_dir.lower().strip()
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "desc"
+
     if not _db_has_data(db):
         _ensure_loaded()
-        results = _CACHE_SUMMARY
+        results = list(_CACHE_SUMMARY)
         if min_score:
             results = [r for r in results if r["score"] >= min_score]
         if query:
@@ -319,6 +330,20 @@ def list_declarations(
                 if q in r.get("name", "").lower()
                 or q in r.get("institution", "").lower()
             ]
+
+        def _cache_sort_key(item: dict[str, Any]) -> Any:
+            if sort_by == "income":
+                return float(item.get("total_income") or 0)
+            if sort_by == "assets":
+                return float(item.get("total_assets") or 0)
+            if sort_by == "name":
+                return (item.get("name") or "").lower()
+            if sort_by == "year":
+                return int(item.get("declaration_year") or 0)
+            return float(item.get("score") or 0)
+
+        results.sort(key=_cache_sort_key, reverse=(sort_dir == "desc"))
+
         total = len(results)
         return {
             "items": results[offset : offset + limit],
@@ -382,18 +407,40 @@ def list_declarations(
         like = f"%{query}%"
         q_base = q_base.filter(
             DeclarantProfile.firstname.ilike(like)
+            | DeclarantProfile.middlename.ilike(like)
             | DeclarantProfile.lastname.ilike(like)
             | DeclarantProfile.work_place.ilike(like)
         )
 
+    if sort_by == "income":
+        order_col = income_sub.c.total_income
+        order_clause = order_col.asc().nullslast() if sort_dir == "asc" else order_col.desc().nullslast()
+    elif sort_by == "assets":
+        order_col = monetary_sub.c.total_assets
+        order_clause = order_col.asc().nullslast() if sort_dir == "asc" else order_col.desc().nullslast()
+    elif sort_by == "name":
+        if sort_dir == "asc":
+            order_clause = (
+                DeclarantProfile.lastname.asc().nullslast(),
+                DeclarantProfile.firstname.asc().nullslast(),
+                DeclarantProfile.middlename.asc().nullslast(),
+            )
+        else:
+            order_clause = (
+                DeclarantProfile.lastname.desc().nullslast(),
+                DeclarantProfile.firstname.desc().nullslast(),
+                DeclarantProfile.middlename.desc().nullslast(),
+            )
+    elif sort_by == "year":
+        order_col = DeclarantProfile.declaration_year
+        order_clause = order_col.asc().nullslast() if sort_dir == "asc" else order_col.desc().nullslast()
+    else:
+        order_col = AnomalyScore.total_score
+        order_clause = order_col.asc().nullslast() if sort_dir == "asc" else order_col.desc().nullslast()
+
     total = q_base.count()
-    rows = (
-        q_base
-        .order_by(AnomalyScore.total_score.desc().nullslast())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    q_ordered = q_base.order_by(*order_clause) if isinstance(order_clause, tuple) else q_base.order_by(order_clause)
+    rows = q_ordered.offset(offset).limit(limit).all()
 
     items = []
     for row in rows:
