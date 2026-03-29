@@ -1,10 +1,27 @@
 import { defineConfig, devices } from "@playwright/test";
+import { MOCK_API_BASE } from "./e2e/mock-api-server";
 
 /**
  * See https://playwright.dev/docs/test-configuration.
+ *
+ * E2E mock strategy
+ * -----------------
+ * A lightweight in-process HTTP server (e2e/mock-api-server.ts) is started
+ * by globalSetup before the Next.js dev server launches.  Both
+ * INTERNAL_API_URL (used by Next.js SSR) and NEXT_PUBLIC_API_URL are pointed
+ * at this mock so all API calls resolve to deterministic fixture data
+ * regardless of whether a real backend is available.
+ *
+ * When reuseExistingServer is true (non-CI), a manually started `npm run dev`
+ * process is reused as-is; in that case the existing server's env takes
+ * precedence.  Stop any running dev server before running `npm run e2e`
+ * locally to ensure the mock is active.
  */
 export default defineConfig({
   testDir: "./e2e",
+  /* Global setup starts the mock API server; teardown stops it. */
+  globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
@@ -56,8 +73,9 @@ export default defineConfig({
     command: "npm run dev",
     url: "http://localhost:3000",
     env: {
-      INTERNAL_API_URL: process.env.INTERNAL_API_URL || "http://localhost:8000",
-      NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+      /* Point SSR fetch calls at the mock API server started in globalSetup */
+      INTERNAL_API_URL: MOCK_API_BASE,
+      NEXT_PUBLIC_API_URL: MOCK_API_BASE,
     },
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
