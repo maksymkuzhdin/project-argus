@@ -50,6 +50,26 @@ def _count_unknowns(rows_list: list[list[dict]]) -> tuple[int, int]:
     return total, unknown
 
 
+def _count_confidentials(rows_list: list[list[dict]]) -> tuple[int, int]:
+    """Count value-status fields and those marked confidential/redacted."""
+    total = 0
+    confidential = 0
+    status_fields = [
+        "amount_status", "total_area_status",
+        "cost_assessment_status", "organization_status",
+    ]
+    confidential_statuses = {"confidential", "redacted_other"}
+
+    for rows in rows_list:
+        for row in rows:
+            for sf in status_fields:
+                if sf in row:
+                    total += 1
+                    if str(row.get(sf) or "") in confidential_statuses:
+                        confidential += 1
+    return total, confidential
+
+
 def process_declaration(raw: dict) -> dict:
     """Process a single declaration through the full pipeline.
 
@@ -80,6 +100,14 @@ def process_declaration(raw: dict) -> dict:
     # Unknown-value frequency
     total_fields, unknown_fields = _count_unknowns(
         [incomes, monetary, real_estate]
+    )
+    conf_total_fields, confidential_fields = _count_confidentials(
+        [incomes, monetary, real_estate]
+    )
+    confidential_ratio = (
+        confidential_fields / conf_total_fields
+        if conf_total_fields > 0
+        else 0.0
     )
 
     # 4. Score
@@ -164,6 +192,14 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
     total_fields, unknown_fields = _count_unknowns(
         [incomes, monetary, real_estate]
     )
+    conf_total_fields, confidential_fields = _count_confidentials(
+        [incomes, monetary, real_estate]
+    )
+    confidential_ratio = (
+        confidential_fields / conf_total_fields
+        if conf_total_fields > 0
+        else 0.0
+    )
 
     # 4. Score
     result = score_declaration(
@@ -208,6 +244,7 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
             "largest_acquisition": str(largest_acq) if largest_acq else None,
             "total_value_fields": total_fields,
             "unknown_value_fields": unknown_fields,
+            "confidential_ratio": confidential_ratio,
             "post_type": bio.get("post_type", ""),
         },
         "score": {

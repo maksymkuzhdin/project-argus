@@ -433,6 +433,284 @@ def _has_any_kw(value: Any, keywords: tuple[str, ...]) -> bool:
     return any(kw in s for kw in keywords)
 
 
+def _asset_totals_by_person(
+    real_estate: list[dict[str, Any]],
+    monetary_assets: list[dict[str, Any]],
+) -> dict[str, Decimal]:
+    """Approximate per-person asset totals using ownership and known values."""
+    totals: dict[str, Decimal] = {}
+
+    for r in real_estate:
+        owner = r.get("right_belongs_raw") or r.get("right_belongs_resolved")
+        if owner is None:
+            continue
+        value = r.get("cost_assessment")
+        if value is None:
+            continue
+        try:
+            value_dec = Decimal(str(value))
+        except Exception:
+            continue
+
+        pct_raw = str(r.get("percent_ownership") or "").replace(",", ".").strip()
+        pct = Decimal("1")
+        if pct_raw:
+            try:
+                pct = Decimal(pct_raw) / Decimal("100")
+            except Exception:
+                pct = Decimal("1")
+        if pct <= 0:
+            continue
+        if pct > 1:
+            pct = Decimal("1")
+
+        key = str(owner)
+        totals[key] = totals.get(key, Decimal(0)) + (value_dec * pct)
+
+    for m in monetary_assets:
+        owner = m.get("person_ref")
+        if owner is None:
+            continue
+        amt_uah = to_uah(m.get("amount"), m.get("currency_code"))
+        if amt_uah is None:
+            continue
+        key = str(owner)
+        totals[key] = totals.get(key, Decimal(0)) + amt_uah
+
+    return totals
+
+
+def _is_ukraine_residence(raw_declaration: dict[str, Any] | None) -> bool:
+    if not isinstance(raw_declaration, dict):
+        return False
+    step1 = ((raw_declaration.get("data") or {}).get("step_1") or {}).get("data") or {}
+    country = step1.get("country")
+    if country is None:
+        return False
+    s = str(country).strip().lower()
+    return s in {"1", "ua", "ukr", "ukraine", "україна"}
+
+
+def _step3_not_applicable(raw_declaration: dict[str, Any] | None) -> bool:
+    if not isinstance(raw_declaration, dict):
+        return False
+    step3 = ((raw_declaration.get("data") or {}).get("step_3") or {})
+    return step3.get("isNotApplicable") == 1
+
+
+def _has_positive_income(incomes: list[dict[str, Any]]) -> bool:
+    for i in incomes:
+        amt = i.get("amount")
+        if amt is None:
+            continue
+        try:
+            if Decimal(str(amt)) > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _confidential_ratio_from_rows(
+    incomes: list[dict[str, Any]],
+    monetary_assets: list[dict[str, Any]],
+    real_estate: list[dict[str, Any]],
+) -> float:
+    status_fields = (
+        "amount_status",
+        "total_area_status",
+        "cost_assessment_status",
+        "organization_status",
+    )
+    confidential_statuses = {"confidential", "redacted_other"}
+    total = 0
+    confidential = 0
+
+    for rows in (incomes, monetary_assets, real_estate):
+        for row in rows:
+            for sf in status_fields:
+                if sf in row:
+                    total += 1
+                    if str(row.get(sf) or "") in confidential_statuses:
+                        confidential += 1
+
+    if total == 0:
+        return 0.0
+    return confidential / total
+
+
+def _cr12_wealth_concentration(
+    *,
+    relation_by_id: dict[str, str],
+    income_by_person: dict[str, Decimal],
+    assets_by_person: dict[str, Decimal],
+) -> RuleResult:
+    """CR12: low-income spouse/child with outsized asset ownership."""
+    rule = "CR12"
+    declarant_assets = assets_by_person.get("1", Decimal(0))
+    if declarant_assets <= 0:
+        return RuleResult(rule, 0.0, False, "Insufficient declarant asset baseline for comparison.")
+
+    best_ratio = Decimal(0)
+    best_pid = None
+    child_or_spouse = ("друж", "чолов", "дит", "child", "син", "дон")
+
+    for pid, rel in relation_by_id.items():
+        rel_l = str(rel or "").lower()
+        if not any(kw in rel_l for kw in child_or_spouse):
+            continue
+
+        person_income = income_by_person.get(pid, Decimal(0))
+        if person_income >= Decimal("50000"):
+            continue
+
+        person_assets = assets_by_person.get(pid, Decimal(0))
+        if person_assets <= 0:
+            continue
+
+        ratio = person_assets / declarant_assets
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_pid = pid
+
+    if best_pid is None or best_ratio < Decimal("2"):
+        return RuleResult(rule, 0.0, False, "No major wealth concentration detected in low-income family members.")
+
+    severity = "HIGH" if best_ratio >= Decimal("5") else "MEDIUM"
+    relation = relation_by_id.get(best_pid, "family member")
+    member_assets = assets_by_person.get(best_pid, Decimal(0))
+    return _make_flag(
+        rule_id=rule,
+        category="corruption",
+        severity=severity,
+        base_weight=3,
+        confidence=0.7,
+        message=(
+            f"{relation} holds {member_assets:,.0f} UAH in known assets, "
+            f"{float(best_ratio):.1f}x declarant-held assets, with low independent income."
+        ),
+    )
+
+
+def _br1_many_corrected(timeline: Any) -> RuleResult:
+    """BR1: repeated declarations in the same year (correction proxy)."""
+    rule = "BR1"
+    per_year = getattr(timeline, "declarations_per_year", {}) or {}
+    if not per_year:
+        return RuleResult(rule, 0.0, False, "No per-year declaration counts available.")
+
+    worst_year = None
+    worst_count = 0
+    for year, count in per_year.items():
+        if count > worst_count:
+            worst_count = count
+            worst_year = year
+
+    if worst_count >= 3:
+        return _make_flag(
+            rule_id=rule,
+            category="opacity",
+            severity="MEDIUM",
+            base_weight=2,
+            confidence=0.8,
+            message=f"Detected {worst_count} declarations for {worst_year}, indicating repeated corrections.",
+        )
+
+    return RuleResult(rule, 0.0, False, "No significant correction pattern detected.")
+
+
+def _cr15_real_estate_income_3y(timeline: Any) -> RuleResult:
+    """CR15: high real-estate value relative to 3-year average income."""
+    rule = "CR15"
+    snaps = [
+        s for s in getattr(timeline, "snapshots", [])
+        if getattr(s, "declaration_type", 1) == 1
+    ]
+    if len(snaps) < 3:
+        return RuleResult(rule, 0.0, False, "Need at least 3 annual snapshots for CR15.")
+
+    best_ratio = 0.0
+    best_end_year = None
+    for i in range(len(snaps) - 2):
+        window = snaps[i:i + 3]
+        incomes: list[Decimal] = []
+        for s in window:
+            inc = getattr(s, "total_income", None)
+            if inc is not None and inc > 0:
+                incomes.append(inc)
+        if len(incomes) < 3:
+            continue
+
+        end_re = getattr(window[2], "total_real_estate", None)
+        if end_re is None or end_re <= 0:
+            continue
+
+        avg_income = sum(incomes) / Decimal(len(incomes))
+        if avg_income <= 0:
+            continue
+
+        ratio = float(end_re / avg_income)
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_end_year = getattr(window[2], "declaration_year", None)
+
+    if best_ratio >= 15.0:
+        return _make_flag(
+            rule_id=rule,
+            category="corruption",
+            severity="HIGH",
+            base_weight=4,
+            confidence=0.8,
+            message=(
+                f"Real-estate value is {best_ratio:.1f}x 3-year average income "
+                f"(window ending {best_end_year})."
+            ),
+        )
+
+    return RuleResult(rule, 0.0, False, "No 3-year real-estate/income imbalance detected.")
+
+
+def _cr14_asset_appearance_disappearance(change: Any) -> RuleResult:
+    """CR14: major asset appears/disappears without matching one-off income."""
+    rule = "CR14"
+    one_off = getattr(change, "one_off_income_curr", None) or Decimal(0)
+
+    appeared_n = getattr(change, "major_assets_appeared", 0) or 0
+    appeared_val = getattr(change, "max_appeared_value", None)
+    if appeared_n > 0 and appeared_val is not None and appeared_val >= Decimal("1000000"):
+        if one_off < appeared_val * Decimal("0.5"):
+            return _make_flag(
+                rule_id=rule,
+                category="corruption",
+                severity="HIGH",
+                base_weight=5,
+                confidence=0.8,
+                message=(
+                    f"Major asset appearance detected ({appeared_n} new major assets, "
+                    f"max {appeared_val:,.0f} UAH) without matching one-off income in {change.to_year}."
+                ),
+            )
+
+    disappeared_n = getattr(change, "major_assets_disappeared", 0) or 0
+    disappeared_val = getattr(change, "max_disappeared_value", None)
+    if disappeared_n > 0 and disappeared_val is not None and disappeared_val >= Decimal("1000000"):
+        if one_off < Decimal("300000"):
+            sev = "HIGH" if disappeared_n >= 2 else "MEDIUM"
+            return _make_flag(
+                rule_id=rule,
+                category="corruption",
+                severity=sev,
+                base_weight=5,
+                confidence=0.7,
+                message=(
+                    f"Major asset disappearance detected ({disappeared_n} assets, "
+                    f"max {disappeared_val:,.0f} UAH) without sale/gift-like one-off income in {change.to_year}."
+                ),
+            )
+
+    return RuleResult(rule, 0.0, False, "No major asset appearance/disappearance anomaly detected.")
+
+
 def _legacy_score_declaration(
     *,
     total_income: Decimal | None = None,
@@ -633,6 +911,22 @@ def score_declaration(
             confidence=1.0,
             message=f"Found {parse_or_extreme} non-parsable or extreme numeric values.",
         ))
+
+    # TQ5: likely-misused step_3 not-applicable marker.
+    if _step3_not_applicable(raw_declaration) and _is_ukraine_residence(raw_declaration):
+        has_income = _has_positive_income(incomes)
+        child_markers = ("дит", "child", "син", "дон")
+        adult_family = sum(1 for m in family_members if not _has_any_kw(m.get("relation"), child_markers))
+        adults = 1 + max(0, adult_family)
+        if adults >= 1 and has_income:
+            flags.append(_make_flag(
+                rule_id="TQ5",
+                category="data_quality",
+                severity="LOW",
+                base_weight=1,
+                confidence=0.6,
+                message="Step 3 is marked not applicable for a Ukraine-resident household with adults and declared income.",
+            ))
 
     # ------------------------------
     # Corruption-risk checks
@@ -1023,6 +1317,15 @@ def score_declaration(
             message="Spouse/child appears as major asset owner with low independent income.",
         ))
 
+    assets_by_person = _asset_totals_by_person(real_estate, monetary_assets)
+    cr12 = _cr12_wealth_concentration(
+        relation_by_id=relation_by_id,
+        income_by_person=income_by_person,
+        assets_by_person=assets_by_person,
+    )
+    if cr12.triggered:
+        flags.append(cr12)
+
     # CR13: repeated family-no-info on key fields.
     family_no_info_count = 0
     for r in real_estate:
@@ -1053,7 +1356,7 @@ def score_declaration(
     # CR16 — Cohort-relative outliers
     # ------------------------------
     if cohort_stats is not None:
-        from app.scoring.cohorts import compute_percentile_rank
+        from app.scoring.cohorts import compute_percentile_rank, get_percentile_value
 
         # Income outlier — top 1% of cohort
         if inc_val is not None and len(getattr(cohort_stats, 'incomes', [])) >= 5:
@@ -1106,6 +1409,25 @@ def score_declaration(
                     base_weight=3,
                     confidence=0.8,
                     message=f"Cash-to-income ratio at {cash_pct:.0%} percentile with {fx_share:.0%} FX concentration.",
+                ))
+
+        # BR3: confidential marker density > 2x cohort median.
+        conf_distribution = getattr(cohort_stats, "confidential_ratios", [])
+        if len(conf_distribution) >= 5:
+            decl_conf_ratio = _confidential_ratio_from_rows(incomes, monetary_assets, real_estate)
+            cohort_median = get_percentile_value(conf_distribution, 0.5)
+            if cohort_median > 0 and decl_conf_ratio > 2.0 * cohort_median:
+                severity = "MEDIUM" if decl_conf_ratio > 3.0 * cohort_median else "LOW"
+                flags.append(_make_flag(
+                    rule_id="BR3",
+                    category="opacity",
+                    severity=severity,
+                    base_weight=1,
+                    confidence=0.7,
+                    message=(
+                        f"Confidential marker density ({decl_conf_ratio:.0%}) exceeds 2x cohort median "
+                        f"({cohort_median:.0%})."
+                    ),
                 ))
 
     # ------------------------------
@@ -1462,7 +1784,11 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
     """
     from app.normalization.assemble_timeline import PersonTimeline as TL
 
-    if not timeline.changes:
+    if (
+        not timeline.changes
+        and not getattr(timeline, "snapshots", None)
+        and not (getattr(timeline, "declarations_per_year", None) or {})
+    ):
         return TimelineScoringResult(total_score=0.0)
 
     # --- Existing YOY rules (worst-case across all pairs) ---
@@ -1474,6 +1800,9 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
     worst_cr5 = RuleResult("CR5", 0.0, False, "No changes to assess.")
     worst_br2 = RuleResult("BR2", 0.0, False, "No changes to assess.")
     worst_br4 = RuleResult("BR4", 0.0, False, "No changes to assess.")
+    worst_cr14 = RuleResult("CR14", 0.0, False, "No changes to assess.")
+    br1 = _br1_many_corrected(timeline)
+    cr15 = _cr15_real_estate_income_3y(timeline)
 
     for change in timeline.changes:
         ir = year_over_year_income_change(change.income_prev, change.income_curr)
@@ -1505,9 +1834,15 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
         if b4.score > worst_br4.score:
             worst_br4 = b4
 
+        # CR14
+        c14 = _cr14_asset_appearance_disappearance(change)
+        if c14.score > worst_cr14.score:
+            worst_cr14 = c14
+
     rules = [
         worst_income_rule, worst_asset_rule, worst_cash_rule,
-        worst_cr5, worst_br2, worst_br4,
+        worst_cr5, worst_br2, worst_br4, worst_cr14,
+        br1, cr15,
     ]
     triggered = [r.rule_name for r in rules if r.triggered]
 

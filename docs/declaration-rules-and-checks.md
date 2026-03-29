@@ -13,7 +13,7 @@ Scoring engine notes:
 - Implemented separate aggregates in score payload: `corruption_risk_score`, `opacity_evasion_score`, `data_quality_score`, `raw_total_score`.
 - `total_score` is native 0–100 scale using bounded nonlinear formula `100 * (1 - exp(-raw_total / 12))`.
 - Cohort scoring (CR16) integrated directly into declaration-level scoring when cohort stats are available.
-- Timeline scoring (CR5, BR2, BR4) integrated into timeline scorer with 0–100 output.
+- Timeline scoring integrated into timeline scorer with 0–100 output (currently includes CR5, CR14, CR15, BR1, BR2, BR4).
 
 Rule status summary:
 
@@ -23,7 +23,7 @@ Rule status summary:
 | TQ2 | Implemented | Orphan/unresolved person ownership references are flagged via unresolved IDs/owners. |
 | TQ3 | Implemented | Real-estate ownership-share totals are checked for >110% or implausibly low totals. |
 | TQ4 | Implemented | Parse errors and extreme numeric outliers are flagged on income/monetary/real-estate fields. |
-| TQ5 | Deferred | Requires reliable residence-country and stronger household-adult inference from profile/location data; not robust in current normalized schema. |
+| TQ5 | Implemented | Conservative implementation flags step_3 not-applicable for Ukraine-resident households with adults and declared income. |
 | CR1 | Implemented | Cash-to-income ratio with MEDIUM/HIGH/EXTREME thresholds (3x/5x/10x). |
 | CR2 | Implemented | FX-cash dominance using FX share and FX-to-income thresholds. |
 | CR3 | Implemented | Same-year acquisition-vs-income rule over real-estate + vehicle costs with one-off income mitigation. |
@@ -35,22 +35,22 @@ Rule status summary:
 | CR9 | Implemented | Commercial/rentable assets with low rent/business income implemented. |
 | CR10 | Implemented | Unknown valuations on major assets implemented with severity escalation. |
 | CR11 | Partially implemented | Proxy ownership by spouse/child with low income implemented for detectable ownership links; limited by partial owner metadata in some asset types. |
-| CR12 | Deferred | Robust per-person asset valuation is not reliable with current normalized ownership/value granularity (shared ownership and missing per-owner values). |
+| CR12 | Implemented | Per-person asset concentration check implemented using known real-estate/monetary values with ownership-share approximation. |
 | CR13 | Implemented | Repeated family-no-info markers on key fields are flagged. |
-| CR14 | Deferred | Requires cross-year asset identity tracking (appearance/disappearance with transaction matching), not currently modeled. |
-| CR15 | Deferred | Requires reliable 3-year real-estate value time series in timeline model; not yet assembled in current timeline snapshots. |
+| CR14 | Implemented | Timeline-based major-asset appearance/disappearance checks are implemented with one-off-income mitigation. |
+| CR15 | Implemented | 3-year real-estate value vs average income ratio is implemented in timeline scoring. |
 | CR16 | Implemented | Cohort-relative outlier checks (income/wealth/cash) integrated directly into declaration-level scorer via optional cohort_stats parameter. |
-| BR1 | Deferred | Corrected-declaration count is not present in current ingestion model. |
+| BR1 | Implemented | Repeated declarations per reporting year are tracked in timeline assembly and scored as correction-pattern proxy. |
 | BR2 | Implemented | Growth in share of unknown values over time computed in timeline layer; triggers on delta ≥ 0.3 with current share ≥ 0.5. |
-| BR3 | Deferred | Cohort median of confidential markers not available in current online scoring path. |
+| BR3 | Implemented | Cohort-relative confidential-marker density (>2× cohort median) is implemented in declaration scoring. |
 | BR4 | Implemented | Role-change detection with post-promotion asset growth analysis in timeline scorer; triggers on role change + asset_growth ≥ 0.5. |
 
 Interaction-bonus status:
 - Implemented: `CR1 + CR2`, `CR10 + CR13`.
-- Deferred: `CR11 + CR12`, `CR14 + no one-off income`, `CR6 + CR15` (dependent on deferred rules).
+- Deferred: `CR11 + CR12`, `CR14 + no one-off income` (as separate interaction bonus), `CR6 + CR15`.
 
 Current reason for deferrals:
-- Deferred rules depend on data not reliably present in the current normalized schema, or on timeline/cohort integrations that are not yet wired into the declaration-level scorer.
+- Remaining deferrals are now mostly interaction-bonus combinations and cohort/region refinements (for CR6), rather than missing core rule wiring.
 
 ---
 

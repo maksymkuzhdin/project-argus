@@ -193,6 +193,7 @@ def _ensure_loaded() -> None:
                 "total_income": float(inc) if inc else None,
                 "total_assets": float(ast) if ast else None,
                 "cash_ratio": features.get("cash_ratio"),
+                "confidential_ratio": features.get("confidential_ratio"),
             })
         distributions = build_cohort_distributions(cohort_summaries)
 

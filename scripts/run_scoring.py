@@ -93,6 +93,7 @@ def main() -> None:
             summary["_income_float"] = float(Decimal(total_inc)) if total_inc else None
             summary["_assets_float"] = float(Decimal(total_ast)) if total_ast else None
             summary["_cash_ratio"] = cash_stats.cash_ratio
+            summary["_confidential_ratio"] = full.get("features", {}).get("confidential_ratio")
 
             results.append(summary)
         except Exception:
@@ -114,6 +115,7 @@ def main() -> None:
                 "total_income": r["_income_float"],
                 "total_assets": r["_assets_float"],
                 "cash_ratio": r.get("_cash_ratio"),
+                "confidential_ratio": r.get("_confidential_ratio"),
             }
             for r in results
         ]

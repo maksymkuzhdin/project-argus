@@ -42,6 +42,8 @@ class YearlySnapshot:
 
     role: str
     institution: str
+    major_assets: dict[str, Decimal]  # fingerprint -> value in UAH
+    one_off_income: Decimal | None
 
 
 @dataclass
@@ -81,6 +83,13 @@ class YOYChange:
     role_curr: str
     role_changed: bool
 
+    # CR14: major-asset appearance/disappearance with one-off-income context
+    major_assets_appeared: int
+    major_assets_disappeared: int
+    max_appeared_value: Decimal | None
+    max_disappeared_value: Decimal | None
+    one_off_income_curr: Decimal | None
+
 
 @dataclass
 class PersonTimeline:
@@ -96,6 +105,7 @@ class PersonTimeline:
     max_income_ratio: float | None    # highest single-step income change ratio
     max_monetary_ratio: float | None  # highest single-step monetary change ratio
     max_cash_delta: Decimal | None    # largest absolute cash increase in one year
+    declarations_per_year: dict[int, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +128,84 @@ def _safe_growth(prev: Decimal | None, curr: Decimal | None) -> float | None:
     if prev <= 0:
         return None
     return float((curr - prev) / prev)
+
+
+def _asset_fingerprint(asset: dict[str, Any], kind: str) -> str:
+    """Build a stable, coarse fingerprint for cross-year asset matching."""
+    if kind == "re":
+        obj = str(asset.get("object_type") or "").strip().lower()
+        city = str(asset.get("city") or "").strip().lower()
+        district = str(asset.get("district") or "").strip().lower()
+        area = asset.get("total_area")
+        area_s = ""
+        if area is not None:
+            try:
+                area_s = f"{Decimal(str(area)).quantize(Decimal('1.0'))}"
+            except Exception:
+                area_s = str(area)
+        return f"re|{obj}|{city}|{district}|{area_s}"
+
+    brand = str(asset.get("brand") or "").strip().lower()
+    model = str(asset.get("model") or "").strip().lower()
+    year = str(asset.get("graduation_year") or asset.get("graduationYear") or "").strip()
+    owner = str(asset.get("owner_label") or asset.get("owner") or "").strip().lower()
+    return f"vh|{brand}|{model}|{year}|{owner}"
+
+
+def _collect_major_assets(full: dict[str, Any]) -> dict[str, Decimal]:
+    """Collect major assets (>= 1,000,000 UAH) keyed by fingerprint."""
+    major: dict[str, Decimal] = {}
+
+    for r in full.get("real_estate", []):
+        c = r.get("cost_assessment")
+        if c is None:
+            continue
+        try:
+            val = Decimal(str(c))
+        except Exception:
+            continue
+        if val < Decimal("1000000"):
+            continue
+        fp = _asset_fingerprint(r, "re")
+        prev = major.get(fp)
+        major[fp] = val if prev is None or val > prev else prev
+
+    for v in full.get("vehicles", []):
+        c = v.get("cost_date")
+        if c is None:
+            continue
+        try:
+            val = Decimal(str(c))
+        except Exception:
+            continue
+        if val < Decimal("1000000"):
+            continue
+        fp = _asset_fingerprint(v, "vh")
+        prev = major.get(fp)
+        major[fp] = val if prev is None or val > prev else prev
+
+    return major
+
+
+def _compute_one_off_income(incomes: list[dict[str, Any]]) -> Decimal:
+    """Approximate one-off income (inheritance/sale/gift) for CR14 mitigation."""
+    total = Decimal(0)
+    for i in incomes:
+        txt = (
+            f"{i.get('income_type') or ''} "
+            f"{i.get('source_type') or ''} "
+            f"{i.get('income_type_other') or ''}"
+        ).lower()
+        if not any(kw in txt for kw in ("спад", "inherit", "sale", "продаж", "gift", "дар")):
+            continue
+        amt = i.get("amount")
+        if amt is None:
+            continue
+        try:
+            total += Decimal(str(amt))
+        except Exception:
+            continue
+    return total
 
 
 def _compute_unknown_share(
@@ -194,6 +282,9 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
         full.get("vehicles", []),
     )
 
+    major_assets = _collect_major_assets(full)
+    one_off_income = _compute_one_off_income(full.get("incomes", []))
+
     return YearlySnapshot(
         declaration_id=str(full["declaration_id"]),
         declaration_year=full.get("declaration_year") or 0,
@@ -211,6 +302,8 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
         unknown_share=unknown_share,
         role=bio.get("work_post", "") or "",
         institution=bio.get("work_place", "") or "",
+        major_assets=major_assets,
+        one_off_income=one_off_income,
     )
 
 
@@ -233,6 +326,11 @@ def _compute_change(a: YearlySnapshot, b: YearlySnapshot) -> YOYChange:
     role_prev = (a.role or "").strip().lower()
     role_curr = (b.role or "").strip().lower()
     role_changed = role_prev != role_curr and bool(role_prev) and bool(role_curr)
+
+    appeared_keys = set(b.major_assets.keys()) - set(a.major_assets.keys())
+    disappeared_keys = set(a.major_assets.keys()) - set(b.major_assets.keys())
+    max_appeared = max((b.major_assets[k] for k in appeared_keys), default=None)
+    max_disappeared = max((a.major_assets[k] for k in disappeared_keys), default=None)
 
     return YOYChange(
         from_year=a.declaration_year,
@@ -261,6 +359,11 @@ def _compute_change(a: YearlySnapshot, b: YearlySnapshot) -> YOYChange:
         role_prev=a.role,
         role_curr=b.role,
         role_changed=role_changed,
+        major_assets_appeared=len(appeared_keys),
+        major_assets_disappeared=len(disappeared_keys),
+        max_appeared_value=max_appeared,
+        max_disappeared_value=max_disappeared,
+        one_off_income_curr=b.one_off_income,
     )
 
 
@@ -311,6 +414,17 @@ def assemble_timeline(fulls: list[dict[str, Any]]) -> PersonTimeline | None:
 
     snapshots = sorted(by_year.values(), key=lambda s: s.declaration_year)
 
+    declarations_per_year: dict[int, int] = {}
+    for full in fulls:
+        year = full.get("declaration_year")
+        if year is None:
+            continue
+        try:
+            y = int(year)
+        except Exception:
+            continue
+        declarations_per_year[y] = declarations_per_year.get(y, 0) + 1
+
     # Compute year-over-year changes between consecutive annual declarations
     annual = [s for s in snapshots if s.declaration_type == 1]
     changes: list[YOYChange] = []
@@ -339,6 +453,7 @@ def assemble_timeline(fulls: list[dict[str, Any]]) -> PersonTimeline | None:
         max_income_ratio=max(income_ratios, default=None),
         max_monetary_ratio=max(monetary_ratios, default=None),
         max_cash_delta=max(cash_deltas, default=None),
+        declarations_per_year=declarations_per_year,
     )
 
 

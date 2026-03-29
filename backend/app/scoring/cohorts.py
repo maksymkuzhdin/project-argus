@@ -37,6 +37,7 @@ class CohortStats:
     incomes: list[float] = field(default_factory=list)
     assets: list[float] = field(default_factory=list)
     cash_ratios: list[float] = field(default_factory=list)
+    confidential_ratios: list[float] = field(default_factory=list)
 
     @property
     def size(self) -> int:
@@ -47,6 +48,7 @@ class CohortStats:
         self.incomes.sort()
         self.assets.sort()
         self.cash_ratios.sort()
+        self.confidential_ratios.sort()
 
 
 @dataclass
@@ -109,6 +111,10 @@ def build_cohort_distributions(
         cr = s.get("cash_ratio")
         if cr is not None:
             stats.cash_ratios.append(float(cr))
+
+        conf = s.get("confidential_ratio")
+        if conf is not None:
+            stats.confidential_ratios.append(float(conf))
 
     # Freeze (sort) and filter small cohorts
     result = {}

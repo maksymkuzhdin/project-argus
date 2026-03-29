@@ -234,6 +234,56 @@ class TestScoreDeclaration:
         assert result.total_score <= 100.0
         assert result.total_score > 0  # should trigger multiple rules
 
+    def test_cr12_wealth_concentration_triggers(self):
+        """CR12 should trigger when low-income spouse has much higher known assets."""
+        result = score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("2500000"),
+            cash_holdings=Decimal("100000"),
+            bank_deposits=Decimal("100000"),
+            incomes=[
+                {"amount": "400000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "20000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[
+                {"amount": "1800000", "currency_code": "UAH", "person_ref": "sp1", "asset_type": "Готівкові кошти"},
+                {"amount": "100000", "currency_code": "UAH", "person_ref": "1", "asset_type": "Готівкові кошти"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "sp1",
+                    "cost_assessment": "1000000",
+                    "percent_ownership": "100",
+                    "object_type": "Квартира",
+                }
+            ],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        assert "CR12" in result.triggered_rules
+
+    def test_tq5_not_applicable_step3_flag(self):
+        result = score_declaration(
+            total_income=Decimal("250000"),
+            total_assets=Decimal("10000"),
+            cash_holdings=Decimal("1000"),
+            bank_deposits=Decimal("5000"),
+            incomes=[{"amount": "250000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=[],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            raw_declaration={
+                "data": {
+                    "step_1": {"data": {"country": "1"}},
+                    "step_3": {"isNotApplicable": 1},
+                }
+            },
+        )
+        assert "TQ5" in result.triggered_rules
+
 
 # ── CR5 — Asset growth vs income growth (timeline rule) ─────────────────
 
@@ -415,6 +465,108 @@ class TestCR16CohortIntegration:
         assert "CR16" not in result.triggered_rules
 
 
+class TestBR3CohortConfidentialDensity:
+    def _cohort(self, confidential_ratios):
+        return SimpleNamespace(
+            incomes=[],
+            assets=[],
+            cash_ratios=[],
+            confidential_ratios=sorted(confidential_ratios),
+        )
+
+    def test_br3_triggers_when_above_2x_cohort_median(self):
+        cohort = self._cohort([0.10, 0.12, 0.13, 0.14, 0.15])  # median ~13%
+
+        result = score_declaration(
+            total_income=Decimal("250000"),
+            total_assets=Decimal("200000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("20000"),
+            incomes=[
+                {"amount": "250000", "amount_status": "confidential", "person_ref": "1", "income_type": "salary"}
+            ],
+            monetary_assets=[
+                {"amount": "10000", "amount_status": "confidential", "asset_type": "Готівкові кошти", "person_ref": "1"},
+                {"amount": "20000", "amount_status": None, "asset_type": "Банківський рахунок", "person_ref": "1"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "1",
+                    "cost_assessment": "170000",
+                    "cost_assessment_status": "confidential",
+                    "object_type": "Квартира",
+                    "percent_ownership": "100",
+                }
+            ],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=cohort,
+        )
+        assert "BR3" in result.triggered_rules
+
+    def test_br3_not_triggered_when_within_2x_median(self):
+        cohort = self._cohort([0.10, 0.12, 0.13, 0.14, 0.15])  # median ~13%
+
+        result = score_declaration(
+            total_income=Decimal("250000"),
+            total_assets=Decimal("200000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("20000"),
+            incomes=[
+                {"amount": "250000", "amount_status": "confidential", "person_ref": "1", "income_type": "salary"}
+            ],
+            monetary_assets=[
+                {"amount": "10000", "amount_status": None, "asset_type": "Готівкові кошти", "person_ref": "1"},
+                {"amount": "20000", "amount_status": None, "asset_type": "Банківський рахунок", "person_ref": "1"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "1",
+                    "cost_assessment": "170000",
+                    "cost_assessment_status": None,
+                    "object_type": "Квартира",
+                    "percent_ownership": "100",
+                }
+            ],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=cohort,
+        )
+        assert "BR3" not in result.triggered_rules
+
+    def test_br3_not_triggered_without_confidential_distribution(self):
+        cohort = self._cohort([0.1, 0.2, 0.3, 0.4])  # size < 5
+
+        result = score_declaration(
+            total_income=Decimal("250000"),
+            total_assets=Decimal("200000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("20000"),
+            incomes=[
+                {"amount": "250000", "amount_status": "confidential", "person_ref": "1", "income_type": "salary"}
+            ],
+            monetary_assets=[
+                {"amount": "10000", "amount_status": "confidential", "asset_type": "Готівкові кошти", "person_ref": "1"}
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "1",
+                    "cost_assessment": "170000",
+                    "cost_assessment_status": "confidential",
+                    "object_type": "Квартира",
+                    "percent_ownership": "100",
+                }
+            ],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=cohort,
+        )
+        assert "BR3" not in result.triggered_rules
+
+
 # ── Timeline scoring integration ────────────────────────────────────────
 
 class TestTimelineScoringIntegration:
@@ -430,6 +582,15 @@ class TestTimelineScoringIntegration:
             max_income_ratio=None,
             max_monetary_ratio=None,
             max_cash_delta=None,
+            declarations_per_year={},
+        )
+
+    def _snapshot(self, year, *, income=None, total_real_estate=None):
+        return SimpleNamespace(
+            declaration_year=year,
+            declaration_type=1,
+            total_income=income,
+            total_real_estate=total_real_estate,
         )
 
     def _change(self, **kwargs):
@@ -447,6 +608,11 @@ class TestTimelineScoringIntegration:
             "unknown_share_delta": 0.0,
             "role_prev": "teacher", "role_curr": "teacher",
             "role_changed": False,
+            "major_assets_appeared": 0,
+            "major_assets_disappeared": 0,
+            "max_appeared_value": None,
+            "max_disappeared_value": None,
+            "one_off_income_curr": Decimal("0"),
         }
         defaults.update(kwargs)
         return SimpleNamespace(**defaults)
@@ -519,3 +685,29 @@ class TestTimelineScoringIntegration:
         tl = self._make_timeline([change])
         result = score_timeline(tl)
         assert 0.0 <= result.total_score <= 100.0
+
+    def test_br1_triggers_from_multiple_declarations_same_year(self):
+        tl = self._make_timeline([])
+        tl.declarations_per_year = {2024: 3}
+        result = score_timeline(tl)
+        assert "BR1" in result.triggered_rules
+
+    def test_cr15_triggers_on_3year_re_income_ratio(self):
+        tl = self._make_timeline([])
+        tl.snapshots = [
+            self._snapshot(2022, income=Decimal("100000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("100000"), total_real_estate=Decimal("600000")),
+            self._snapshot(2024, income=Decimal("100000"), total_real_estate=Decimal("2000000")),
+        ]
+        result = score_timeline(tl)
+        assert "CR15" in result.triggered_rules
+
+    def test_cr14_appearance_without_one_off_income_triggers(self):
+        change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("1500000"),
+            one_off_income_curr=Decimal("100000"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert "CR14" in result.triggered_rules
