@@ -123,6 +123,18 @@ class TestParseStep12EdgeCases:
         assert rows[0]["organization_status"] is None
         assert rows[0]["organization"] == "Приватбанк"
 
+    def test_currency_dict_value_is_handled(self):
+        item = {
+            "assetsCurrency": {"value": "USD (Долар США)", "status": None, "original": "USD (Долар США)"},
+            "sizeAssets": "1000",
+            "iteration": "1",
+            "objectType": "Cash",
+            "rights": [{"ownershipType": "Власність", "rightBelongs": "1"}],
+        }
+        decl = _make_declaration({"data": [item]})
+        rows = parse_step_12(decl)
+        assert rows[0]["currency_code"] == "USD"
+
 
 # ── Real data snippet ───────────────────────────────────────────────────
 

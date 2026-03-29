@@ -80,7 +80,7 @@ _CURRENCY_ALIASES: dict[str, str] = {
 }
 
 
-def extract_currency_code(raw: str | None) -> str | None:
+def extract_currency_code(raw: Any) -> str | None:
     """Extract an ISO 4217-ish currency code from a declaration currency string.
 
     Examples::
@@ -96,6 +96,19 @@ def extract_currency_code(raw: str | None) -> str | None:
     """
     if raw is None or raw == "":
         return None
+
+    # Sanitized placeholders may be dicts like
+    # {"value": None, "status": "unknown", "original": "[Не відомо]"}.
+    if isinstance(raw, dict):
+        candidate = raw.get("value")
+        if candidate in (None, ""):
+            candidate = raw.get("original")
+        raw = candidate
+        if raw is None or raw == "":
+            return None
+
+    if not isinstance(raw, str):
+        raw = str(raw)
 
     # Try leading 3-letter code first
     m = _CURRENCY_CODE_RE.match(raw.strip())
