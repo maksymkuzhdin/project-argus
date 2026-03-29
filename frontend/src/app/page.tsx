@@ -37,7 +37,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
   const rawSortBy = (resolvedParams as Record<string, string | undefined>).sort_by || "score";
   const rawSortDir = (resolvedParams as Record<string, string | undefined>).sort_dir || "desc";
   const sortBy = ["score", "income", "assets", "name", "year"].includes(rawSortBy) ? rawSortBy : "score";
-  const sortDir = rawSortDir === "asc" ? "asc" : "desc";
+  const sortDir = sortBy === "score" ? "desc" : (rawSortDir === "asc" ? "asc" : "desc");
 
   let loadError: string | null = null;
   let stats;
@@ -83,6 +83,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
   };
   const currentDashboardHref = buildPageHref(page);
   const buildSortHref = (field: "name" | "year" | "income" | "assets" | "score") => {
+    if (field === "score") {
+      const params = new URLSearchParams({
+        page: "1",
+        sort_by: "score",
+        sort_dir: "desc",
+      });
+      if (query) params.set("query", query);
+      return `/?${params.toString()}`;
+    }
     const nextDir = sortBy === field && sortDir === "desc" ? "asc" : "desc";
     const params = new URLSearchParams({
       page: "1",
@@ -93,6 +102,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
     return `/?${params.toString()}`;
   };
   const sortArrow = (field: "name" | "year" | "income" | "assets" | "score") => {
+    if (field === "score") return "↓";
     if (sortBy !== field) return "↕";
     return sortDir === "asc" ? "↑" : "↓";
   };
@@ -168,29 +178,29 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
               <thead className="bg-zinc-900 text-zinc-500 border-b border-zinc-800">
                 <tr>
                   <th className="px-6 py-4 font-medium">
-                    <Link href={buildSortHref("name")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                    <Link href={buildSortHref("name")} scroll={false} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
                       Declarant <span className="text-xs">{sortArrow("name")}</span>
                     </Link>
                   </th>
                   <th className="px-6 py-4 font-medium text-center">
-                    <Link href={buildSortHref("year")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                    <Link href={buildSortHref("year")} scroll={false} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
                       Year <span className="text-xs">{sortArrow("year")}</span>
                     </Link>
                   </th>
                   <th className="px-6 py-4 font-medium">Institution / Role</th>
                   <th className="px-6 py-4 font-medium text-right">
-                    <Link href={buildSortHref("income")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                    <Link href={buildSortHref("income")} scroll={false} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
                       Income <span className="text-xs">{sortArrow("income")}</span>
                     </Link>
                   </th>
                   <th className="px-6 py-4 font-medium text-right">
-                    <Link href={buildSortHref("assets")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                    <Link href={buildSortHref("assets")} scroll={false} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
                       Assets <span className="text-xs">{sortArrow("assets")}</span>
                     </Link>
                   </th>
                   <th className="px-6 py-4 font-medium text-center">Flags</th>
                   <th className="px-6 py-4 font-medium text-right">
-                    <Link href={buildSortHref("score")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                    <Link href={buildSortHref("score")} scroll={false} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
                       Score <span className="text-xs">{sortArrow("score")}</span>
                     </Link>
                   </th>
