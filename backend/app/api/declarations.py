@@ -235,9 +235,9 @@ def _ensure_loaded() -> None:
 
             name = " ".join(
                 p for p in [
+                    bio.get("lastname", ""),
                     bio.get("firstname", ""),
                     bio.get("middlename", ""),
-                    bio.get("lastname", ""),
                 ] if p
             ) or "Unknown Official"
 
@@ -398,7 +398,7 @@ def list_declarations(
     items = []
     for row in rows:
         name = " ".join(
-            p for p in [row.firstname, row.middlename, row.lastname] if p
+            p for p in [row.lastname, row.firstname, row.middlename] if p
         ) or "Unknown Official"
         triggered = row.triggered_rules.split(",") if row.triggered_rules else []
 
@@ -548,9 +548,9 @@ def get_declaration(doc_id: str, db: Session = Depends(get_db)) -> dict[str, Any
         "explanation": score_row.explanation_summary if score_row else "No anomaly signals detected.",
         "name": " ".join(
             p for p in [
+                bio.get("lastname", ""),
                 bio.get("firstname", ""),
                 bio.get("middlename", ""),
-                bio.get("lastname", ""),
             ] if p
         ) or "Unknown Official",
         "role": bio.get("work_post", ""),

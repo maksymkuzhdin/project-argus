@@ -27,6 +27,13 @@ function formatField(field: unknown): string {
     return String(field);
 }
 
+function composeDeclarantName(bio: DeclarationDetail["bio"]): string {
+    return [bio.lastname, bio.firstname, bio.middlename]
+        .map((part) => formatField(part).trim())
+        .filter(Boolean)
+        .join(" ");
+}
+
 export default async function DeclarationDetail({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
     let data: DeclarationDetail | null = null;
@@ -56,6 +63,8 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
     const bio = data.bio;
     const rawMetadata = data.raw_metadata;
     const scoreBand = getScoreBand(Number(summary.score || 0));
+    const recordId = formatField(resolvedParams.id);
+    const nazkRecordUrl = `https://public.nazk.gov.ua/documents/${encodeURIComponent(recordId)}`;
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -81,7 +90,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                     <div className="flex justify-between items-start">
                         <div>
                             <h1 className="text-3xl font-bold tracking-tight text-zinc-50 mb-2">
-                                {formatField(bio.firstname)} {formatField(bio.middlename)} {formatField(bio.lastname)}
+                                {composeDeclarantName(bio)}
                             </h1>
                             <div className="text-lg text-zinc-400">{formatField(bio.work_post)}</div>
                             <div className="text-zinc-500">{formatField(bio.work_place)}</div>
@@ -114,7 +123,17 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
                         </div>
                         <div className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 flex items-center gap-2">
                             <span className="text-zinc-500">ID</span>
-                            <span className="text-zinc-300 font-mono text-xs">{formatField(resolvedParams.id)}</span>
+                            <span className="text-zinc-300 font-mono text-xs">{recordId}</span>
+                        </div>
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5">
+                            <a
+                                href={nazkRecordUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-amber-400 hover:text-amber-300 transition-colors font-medium"
+                            >
+                                View on NACP
+                            </a>
                         </div>
                     </div>
                 </header>
