@@ -1,18 +1,35 @@
 """
-Tests for app.scoring.rules
+Tests for app.scoring.rules — Updated for 0–100 scoring scale.
+
+Covers:
+    - Existing rule functions (unit-level, still 0–1)
+    - Composite `score_declaration` (now 0–100)
+    - CR5 — Asset growth vs income growth (timeline)
+    - BR2 — Unknown-share growth (timeline)
+    - BR4 — Role change + wealth jump (timeline)
+    - CR16 — Cohort-relative outliers (within declaration scorer)
+    - Timeline scoring integration
 """
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
 from app.scoring.rules import (
     RuleResult,
     acquisition_income_mismatch,
+    br2_unknown_share_growth,
+    br4_role_change_wealth_jump,
     cash_to_bank_ratio,
+    cr5_asset_vs_income_growth,
     score_declaration,
+    score_timeline,
     unexplained_wealth,
     unknown_value_frequency,
+    year_over_year_income_change,
+    year_over_year_asset_growth,
+    foreign_cash_jump,
 )
 
 
@@ -138,7 +155,7 @@ class TestAcquisitionIncomeMismatch:
         assert not r.triggered
 
 
-# ── score_declaration (composite) ───────────────────────────────────────
+# ── score_declaration (composite, 0–100 scale) ──────────────────────────
 
 class TestScoreDeclaration:
     def test_clean_declaration(self):
@@ -166,6 +183,7 @@ class TestScoreDeclaration:
             largest_acquisition_cost=Decimal("500000"),
         )
         assert result.total_score > 0
+        assert result.total_score <= 100.0
         assert len(result.triggered_rules) > 0
         assert "unexplained_wealth" in result.triggered_rules
         assert "cash_to_bank_ratio" in result.triggered_rules
@@ -175,7 +193,7 @@ class TestScoreDeclaration:
         assert result.total_score == 0.0
         assert result.triggered_rules == []
 
-    def test_score_capped_at_one(self):
+    def test_score_capped_at_100(self):
         result = score_declaration(
             total_income=Decimal("1"),
             total_assets=Decimal("10000000"),
@@ -185,7 +203,8 @@ class TestScoreDeclaration:
             unknown_value_fields=10,
             largest_acquisition_cost=Decimal("10000000"),
         )
-        assert result.total_score <= 1.0
+        assert result.total_score <= 100.0
+        assert result.total_score > 0
 
     def test_rule_results_populated(self):
         result = score_declaration(
@@ -194,3 +213,309 @@ class TestScoreDeclaration:
         )
         assert len(result.rule_results) == 6
         assert all(isinstance(r, RuleResult) for r in result.rule_results)
+
+    def test_new_path_returns_0_to_100(self):
+        """score_declaration with full inputs (incomes, etc.) returns 0–100."""
+        result = score_declaration(
+            total_income=Decimal("100000"),
+            total_assets=Decimal("5000000"),
+            cash_holdings=Decimal("4000000"),
+            bank_deposits=Decimal("50000"),
+            incomes=[{"amount": "100000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=[
+                {"amount": "4000000", "asset_type": "Готівка", "currency_code": "UAH", "person_ref": "1"},
+            ],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+        )
+        assert result.total_score >= 0.0
+        assert result.total_score <= 100.0
+        assert result.total_score > 0  # should trigger multiple rules
+
+
+# ── CR5 — Asset growth vs income growth (timeline rule) ─────────────────
+
+class TestCR5AssetVsIncomeGrowth:
+    def _change(self, asset_growth, income_growth):
+        return SimpleNamespace(
+            asset_growth=asset_growth,
+            income_growth=income_growth,
+            from_year=2023,
+            to_year=2024,
+        )
+
+    def test_high_asset_growth_low_income_growth(self):
+        r = cr5_asset_vs_income_growth(self._change(0.6, 0.05))
+        assert r.triggered
+        assert r.rule_name == "CR5"
+        assert r.score > 0
+
+    def test_moderate_asset_growth_declining_income(self):
+        r = cr5_asset_vs_income_growth(self._change(0.25, -0.1))
+        assert r.triggered
+        assert r.rule_name == "CR5"
+
+    def test_no_trigger_normal_growth(self):
+        r = cr5_asset_vs_income_growth(self._change(0.1, 0.15))
+        assert not r.triggered
+        assert r.score == 0.0
+
+    def test_insufficient_data(self):
+        r = cr5_asset_vs_income_growth(self._change(None, 0.1))
+        assert not r.triggered
+
+    def test_high_asset_growth_no_income_data(self):
+        r = cr5_asset_vs_income_growth(self._change(0.7, None))
+        assert r.triggered
+
+    def test_just_below_threshold(self):
+        r = cr5_asset_vs_income_growth(self._change(0.49, 0.05))
+        assert not r.triggered
+
+
+# ── BR2 — Unknown-share growth (timeline rule) ──────────────────────────
+
+class TestBR2UnknownShareGrowth:
+    def _change(self, prev, curr):
+        return SimpleNamespace(
+            unknown_share_prev=prev,
+            unknown_share_curr=curr,
+            unknown_share_delta=curr - prev,
+            from_year=2023,
+            to_year=2024,
+        )
+
+    def test_triggered_large_increase(self):
+        r = br2_unknown_share_growth(self._change(0.2, 0.6))
+        assert r.triggered
+        assert r.rule_name == "BR2"
+        assert "opacity" in (r.category or "")
+
+    def test_not_triggered_small_increase(self):
+        r = br2_unknown_share_growth(self._change(0.3, 0.45))
+        assert not r.triggered
+
+    def test_not_triggered_large_delta_but_low_level(self):
+        """Delta >= 0.3 but curr < 0.5 should NOT trigger."""
+        r = br2_unknown_share_growth(self._change(0.1, 0.4))
+        assert not r.triggered
+
+    def test_not_triggered_decrease(self):
+        r = br2_unknown_share_growth(self._change(0.6, 0.3))
+        assert not r.triggered
+
+    def test_exact_threshold(self):
+        r = br2_unknown_share_growth(self._change(0.2, 0.5))
+        assert r.triggered  # delta=0.3, curr=0.5 — exactly on threshold
+
+
+# ── BR4 — Role change + wealth jump (timeline rule) ────────────────────
+
+class TestBR4RoleChangeWealthJump:
+    def _change(self, role_changed, asset_growth):
+        return SimpleNamespace(
+            role_changed=role_changed,
+            asset_growth=asset_growth,
+            from_year=2023,
+            to_year=2024,
+        )
+
+    def test_triggered_high(self):
+        r = br4_role_change_wealth_jump(self._change(True, 1.2))
+        assert r.triggered
+        assert r.rule_name == "BR4"
+        assert "HIGH" in (r.severity or "")
+
+    def test_triggered_medium(self):
+        r = br4_role_change_wealth_jump(self._change(True, 0.6))
+        assert r.triggered
+        assert "MEDIUM" in (r.severity or "")
+
+    def test_not_triggered_no_role_change(self):
+        r = br4_role_change_wealth_jump(self._change(False, 1.5))
+        assert not r.triggered
+
+    def test_not_triggered_small_growth(self):
+        r = br4_role_change_wealth_jump(self._change(True, 0.3))
+        assert not r.triggered
+
+    def test_no_asset_data(self):
+        r = br4_role_change_wealth_jump(self._change(True, None))
+        assert not r.triggered
+
+
+# ── CR16 — Cohort-relative outliers ─────────────────────────────────────
+
+class TestCR16CohortIntegration:
+    def _cohort(self, incomes, assets, cash_ratios):
+        return SimpleNamespace(
+            incomes=sorted(incomes),
+            assets=sorted(assets),
+            cash_ratios=sorted(cash_ratios),
+        )
+
+    def test_income_outlier_top_1pct(self):
+        # 99 values from 100k-990k, our declarant at 5M
+        incomes = [float(i * 10000) for i in range(10, 100)]
+        assets = [float(i * 10000) for i in range(10, 100)]
+        cohort = self._cohort(incomes, assets, [0.1] * 90)
+
+        result = score_declaration(
+            total_income=Decimal("5000000"),
+            total_assets=Decimal("500000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("50000"),
+            incomes=[{"amount": "5000000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=[],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=cohort,
+        )
+        assert "CR16" in result.triggered_rules
+
+    def test_wealth_outlier_top_5pct(self):
+        incomes = [float(i * 10000) for i in range(10, 100)]
+        # Peer assets: 100k-900k, our declarant at 2M (top ~5%)
+        assets = [float(i * 10000) for i in range(10, 100)]
+        cohort = self._cohort(incomes, assets, [0.1] * 90)
+
+        result = score_declaration(
+            total_income=Decimal("300000"),
+            total_assets=Decimal("2000000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("50000"),
+            incomes=[{"amount": "300000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=[],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=cohort,
+        )
+        assert "CR16" in result.triggered_rules
+
+    def test_no_cohort_no_cr16(self):
+        result = score_declaration(
+            total_income=Decimal("5000000"),
+            total_assets=Decimal("500000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("50000"),
+            incomes=[{"amount": "5000000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=[],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+            cohort_stats=None,
+        )
+        assert "CR16" not in result.triggered_rules
+
+
+# ── Timeline scoring integration ────────────────────────────────────────
+
+class TestTimelineScoringIntegration:
+    """End-to-end tests for `score_timeline` with new rules."""
+
+    def _make_timeline(self, changes):
+        """Build a minimal PersonTimeline-like object for testing."""
+        return SimpleNamespace(
+            user_declarant_id=1,
+            name="Test Person",
+            snapshots=[],
+            changes=changes,
+            max_income_ratio=None,
+            max_monetary_ratio=None,
+            max_cash_delta=None,
+        )
+
+    def _change(self, **kwargs):
+        """Build a YOYChange-like namespace with defaults."""
+        defaults = {
+            "from_year": 2023, "to_year": 2024,
+            "income_prev": None, "income_curr": None,
+            "income_delta": None, "income_ratio": None,
+            "monetary_prev": None, "monetary_curr": None,
+            "monetary_delta": None, "monetary_ratio": None,
+            "cash_prev": None, "cash_curr": None, "cash_delta": None,
+            "assets_prev": None, "assets_curr": None,
+            "asset_growth": None, "income_growth": None,
+            "unknown_share_prev": 0.0, "unknown_share_curr": 0.0,
+            "unknown_share_delta": 0.0,
+            "role_prev": "teacher", "role_curr": "teacher",
+            "role_changed": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_empty_timeline(self):
+        tl = self._make_timeline([])
+        result = score_timeline(tl)
+        assert result.total_score == 0.0
+
+    def test_cr5_triggers(self):
+        change = self._change(
+            asset_growth=0.8, income_growth=0.05,
+            assets_prev=Decimal("1000000"), assets_curr=Decimal("1800000"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert result.total_score > 0
+        assert result.total_score <= 100.0
+        assert "CR5" in result.triggered_rules
+
+    def test_br2_triggers(self):
+        change = self._change(
+            unknown_share_prev=0.1, unknown_share_curr=0.6,
+            unknown_share_delta=0.5,
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert "BR2" in result.triggered_rules
+
+    def test_br4_triggers(self):
+        change = self._change(
+            role_changed=True, asset_growth=0.7,
+            assets_prev=Decimal("500000"), assets_curr=Decimal("850000"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert "BR4" in result.triggered_rules
+
+    def test_mixed_signals(self):
+        """Multiple rules triggering should produce a higher score."""
+        change = self._change(
+            income_prev=Decimal("200000"), income_curr=Decimal("800000"),
+            income_ratio=4.0,
+            asset_growth=0.6, income_growth=0.05,
+            role_changed=True,
+            unknown_share_prev=0.1, unknown_share_curr=0.7,
+            unknown_share_delta=0.6,
+            cash_prev=Decimal("50000"), cash_curr=Decimal("500000"),
+            cash_delta=Decimal("450000"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert result.total_score > 0
+        assert len(result.triggered_rules) >= 3
+
+    def test_score_is_0_to_100(self):
+        """Timeline scores should always be in [0, 100]."""
+        change = self._change(
+            income_prev=Decimal("100000"), income_curr=Decimal("500000"),
+            income_ratio=5.0,
+            monetary_prev=Decimal("200000"), monetary_curr=Decimal("2000000"),
+            monetary_ratio=10.0,
+            cash_prev=Decimal("10000"), cash_curr=Decimal("1000000"),
+            cash_delta=Decimal("990000"),
+            asset_growth=2.0, income_growth=-0.5,
+            role_changed=True,
+            unknown_share_prev=0.0, unknown_share_curr=0.8,
+            unknown_share_delta=0.8,
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert 0.0 <= result.total_score <= 100.0

@@ -56,6 +56,7 @@ def process_declaration(raw: dict) -> dict:
     Returns a summary dict with parsed counts and scores.
     """
     declaration_id = raw.get("id", "unknown")
+    declaration_year = raw.get("declaration_year")
 
     # 1. Sanitize
     clean = sanitize(raw)
@@ -93,7 +94,15 @@ def process_declaration(raw: dict) -> dict:
         ownership_declarant=ownership.declarant_items,
         ownership_family=ownership.family_items,
         ownership_total=ownership.total_items,
+        incomes=incomes,
+        monetary_assets=monetary,
+        real_estate=real_estate,
+        vehicles=vehicles,
+        family_members=family,
+        declaration_year=declaration_year,
+        raw_declaration=raw,
     )
+
 
     return {
         "declaration_id": declaration_id,
@@ -110,11 +119,16 @@ def process_declaration(raw: dict) -> dict:
 
 
 
-def process_declaration_full(raw: dict) -> dict[str, Any]:
+def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -> dict[str, Any]:
     """Process a declaration and return all parsed sections + features + scores.
 
     Unlike ``process_declaration`` (summary only), this returns the full
     parsed data needed for the detail view and DB persistence.
+
+    Parameters
+    ----------
+    cohort_stats:
+        Optional ``CohortStats`` for CR16 cohort-relative outlier checks.
     """
     declaration_id = raw.get("id", "unknown")
 
@@ -163,6 +177,14 @@ def process_declaration_full(raw: dict) -> dict[str, Any]:
         ownership_declarant=ownership.declarant_items,
         ownership_family=ownership.family_items,
         ownership_total=ownership.total_items,
+        incomes=incomes,
+        monetary_assets=monetary,
+        real_estate=real_estate,
+        vehicles=vehicles,
+        family_members=family,
+        declaration_year=declaration_year,
+        raw_declaration=raw,
+        cohort_stats=cohort_stats,
     )
 
     return {
@@ -186,9 +208,14 @@ def process_declaration_full(raw: dict) -> dict[str, Any]:
             "largest_acquisition": str(largest_acq) if largest_acq else None,
             "total_value_fields": total_fields,
             "unknown_value_fields": unknown_fields,
+            "post_type": bio.get("post_type", ""),
         },
         "score": {
             "total_score": result.total_score,
+            "corruption_risk_score": result.corruption_risk_score,
+            "opacity_evasion_score": result.opacity_evasion_score,
+            "data_quality_score": result.data_quality_score,
+            "raw_total_score": result.raw_total_score,
             "triggered_rules": result.triggered_rules,
             "explanation": result.explanation_summary,
             "rule_details": [
@@ -197,6 +224,9 @@ def process_declaration_full(raw: dict) -> dict[str, Any]:
                     "score": r.score,
                     "triggered": r.triggered,
                     "explanation": r.explanation,
+                    "category": r.category,
+                    "severity": r.severity,
+                    "confidence": r.confidence,
                 }
                 for r in result.rule_results
             ],

@@ -141,7 +141,7 @@ def main() -> None:
             if l2_triggered:
                 l2_hit_count += 1
                 l2_score = sum(lr.score for lr in l2_triggered)
-                r["score"] = min(1.0, round(r["score"] + l2_score * 0.3, 3))
+                r["score"] = min(100.0, round(r["score"] + l2_score * 3.0, 2))
                 r["triggered_rules"].extend(lr.rule_name for lr in l2_triggered)
                 existing = r.get("explanation", "")
                 l2_lines = "\n".join(f"• {lr.explanation}" for lr in l2_triggered)
@@ -164,7 +164,7 @@ def main() -> None:
     for r in results:
         flags = ", ".join(r["triggered_rules"]) if r["triggered_rules"] else "—"
         logger.info(
-            "%-14s %-30s %8.3f  %s",
+            "%-14s %-30s %8.1f  %s",
             str(r["declaration_id"])[:14],
             r["name"][:30],
             r["score"],

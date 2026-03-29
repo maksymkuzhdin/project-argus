@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import DeclarantProfile, IncomeEntry, MonetaryAsset, RealEstateAsset, Vehicle
 from app.db.session import get_db
+from app.features.cash import classify_monetary_assets
 from app.normalization.assemble_timeline import YearlySnapshot, YOYChange, PersonTimeline, assemble_timeline
 from app.scoring.rules import score_timeline
 
@@ -95,6 +96,65 @@ def _timeline_response(
     }
 
 
+def _income_row_to_dict(row: IncomeEntry) -> dict[str, Any]:
+    return {
+        "person_ref": row.person_ref,
+        "income_type": row.income_type,
+        "income_type_other": row.income_type_other,
+        "amount": float(row.amount) if row.amount is not None else None,
+        "amount_status": row.amount_status,
+        "source_name": row.source_name,
+        "source_code": row.source_code,
+        "source_type": row.source_type,
+    }
+
+
+def _monetary_row_to_dict(row: MonetaryAsset) -> dict[str, Any]:
+    return {
+        "person_ref": row.person_ref,
+        "asset_type": row.asset_type,
+        "currency_raw": row.currency_raw,
+        "currency_code": row.currency_code,
+        "amount": float(row.amount) if row.amount is not None else None,
+        "amount_status": None,
+        "organization": row.organization,
+        "organization_status": row.organization_status,
+        "ownership_type": row.ownership_type,
+    }
+
+
+def _real_estate_row_to_dict(row: RealEstateAsset) -> dict[str, Any]:
+    return {
+        "object_type": row.object_type,
+        "other_object_type": row.other_object_type,
+        "total_area": float(row.total_area) if row.total_area is not None else None,
+        "total_area_status": row.total_area_status,
+        "cost_assessment": float(row.cost_assessment) if row.cost_assessment is not None else None,
+        "cost_assessment_status": row.cost_assessment_status,
+        "owning_date": row.owning_date,
+        "right_belongs_raw": row.right_belongs_raw,
+        "right_belongs_resolved": row.right_belongs_resolved,
+        "ownership_type": row.ownership_type,
+        "percent_ownership": row.percent_ownership,
+        "city": row.city,
+        "district": row.district,
+        "region": row.region,
+    }
+
+
+def _vehicle_row_to_dict(row: Vehicle) -> dict[str, Any]:
+    return {
+        "object_type": row.object_type,
+        "brand": row.brand,
+        "model": row.model,
+        "graduation_year": row.graduation_year,
+        "owning_date": row.owning_date,
+        "cost_date": float(row.cost_date) if row.cost_date is not None else None,
+        "ownership_type": row.ownership_type,
+        "right_belongs_resolved": row.right_belongs_resolved,
+    }
+
+
 # ---------------------------------------------------------------------------
 # DB path helper — build a timeline from database rows
 # ---------------------------------------------------------------------------
@@ -117,12 +177,44 @@ def _build_timeline_from_db(
     for p in profiles:
         decl_id = p.declaration_id
 
+        incomes_rows = db.query(IncomeEntry).filter(
+            IncomeEntry.declaration_id == decl_id
+        ).all()
+        monetary_rows = db.query(MonetaryAsset).filter(
+            MonetaryAsset.declaration_id == decl_id
+        ).all()
+        real_estate_rows = db.query(RealEstateAsset).filter(
+            RealEstateAsset.declaration_id == decl_id
+        ).all()
+        vehicle_rows = db.query(Vehicle).filter(
+            Vehicle.declaration_id == decl_id
+        ).all()
+
+        incomes = [_income_row_to_dict(r) for r in incomes_rows]
+        monetary = [_monetary_row_to_dict(r) for r in monetary_rows]
+        real_estate = [_real_estate_row_to_dict(r) for r in real_estate_rows]
+        vehicles = [_vehicle_row_to_dict(r) for r in vehicle_rows]
+
         total_income = db.query(func.sum(IncomeEntry.amount)).filter(
             IncomeEntry.declaration_id == decl_id
         ).scalar()
         total_monetary = db.query(func.sum(MonetaryAsset.amount)).filter(
             MonetaryAsset.declaration_id == decl_id
         ).scalar()
+        total_real_estate = db.query(func.sum(RealEstateAsset.cost_assessment)).filter(
+            RealEstateAsset.declaration_id == decl_id
+        ).scalar()
+
+        total_assets = Decimal(0)
+        has_assets = False
+        if total_monetary is not None:
+            total_assets += Decimal(total_monetary)
+            has_assets = True
+        if total_real_estate is not None:
+            total_assets += Decimal(total_real_estate)
+            has_assets = True
+
+        cash_bank = classify_monetary_assets(monetary)
 
         # Re-build features dict so assemble_timeline can use it
         full = {
@@ -137,25 +229,17 @@ def _build_timeline_from_db(
                 "work_post": p.work_post,
                 "work_place": p.work_place,
             },
-            "incomes": [None] * (db.query(func.count(IncomeEntry.id)).filter(
-                IncomeEntry.declaration_id == decl_id
-            ).scalar() or 0),
-            "monetary": [None] * (db.query(func.count(MonetaryAsset.id)).filter(
-                MonetaryAsset.declaration_id == decl_id
-            ).scalar() or 0),
-            "real_estate": [None] * (db.query(func.count(RealEstateAsset.id)).filter(
-                RealEstateAsset.declaration_id == decl_id
-            ).scalar() or 0),
-            "vehicles": [None] * (db.query(func.count(Vehicle.id)).filter(
-                Vehicle.declaration_id == decl_id
-            ).scalar() or 0),
+            "incomes": incomes,
+            "monetary": monetary,
+            "real_estate": real_estate,
+            "vehicles": vehicles,
             "bank_accounts": [],
             "family_members": [],
             "features": {
                 "total_income": str(total_income) if total_income else None,
-                "total_assets": str(total_monetary) if total_monetary else None,
-                "cash": None,
-                "bank": None,
+                "total_assets": str(total_assets) if has_assets else None,
+                "cash": str(cash_bank.cash) if cash_bank.cash else None,
+                "bank": str(cash_bank.bank) if cash_bank.bank else None,
             },
         }
         fulls.append(full)

@@ -155,8 +155,8 @@ _LOCK = threading.Lock()
 def _ensure_loaded() -> None:
     """Populate the in-memory cache from raw JSON files.
 
-    Uses ``process_declaration_full`` once per declaration instead of
-    running both process_declaration and process_declaration_full.
+    Uses ``process_declaration_full`` once per declaration, then optionally
+    re-scores with cohort context (CR16) in a second pass.
     """
     global _LOADED
     if _LOADED:
@@ -167,17 +167,49 @@ def _ensure_loaded() -> None:
             return
 
         raw_dir = Path(settings.raw_data_dir)
-        example_dir = Path("c:/personal_files/ai declarations/example declarations")
+        project_root = Path(__file__).resolve().parents[3]
+        example_dir = project_root.parent / "example declarations"
         files = iter_raw_declarations(raw_dir)
         if not files and example_dir.exists():
             files = iter_raw_declarations(example_dir)
 
+        # ── Pass 1: Process all declarations (no cohort context) ──────
+        raw_entries: list[tuple[dict, dict]] = []  # (raw, full)
         for f in files:
             raw = load_declaration(f)
-            doc_id = raw.get("id", raw.get("doc_id", "unknown"))
-
-            # Single pass through the full pipeline
             full = process_declaration_full(raw)
+            raw_entries.append((raw, full))
+
+        # ── Build cohort distributions from pass 1 ────────────────────
+        from app.scoring.cohorts import build_cohort_distributions, CohortKey
+        cohort_summaries = []
+        for _, full in raw_entries:
+            features = full.get("features", {})
+            inc = features.get("total_income")
+            ast = features.get("total_assets")
+            cohort_summaries.append({
+                "post_type": features.get("post_type", ""),
+                "declaration_year": full.get("declaration_year"),
+                "total_income": float(inc) if inc else None,
+                "total_assets": float(ast) if ast else None,
+                "cash_ratio": features.get("cash_ratio"),
+            })
+        distributions = build_cohort_distributions(cohort_summaries)
+
+        # ── Pass 2: Re-score with cohort context if distributions exist ─
+        for raw, full in raw_entries:
+            features = full.get("features", {})
+            pt = features.get("post_type", "")
+            yr = full.get("declaration_year")
+            cohort = None
+            if pt and yr and distributions:
+                cohort = distributions.get(CohortKey(post_type=str(pt), year=int(yr)))
+
+            # Re-score with cohort context if available
+            if cohort is not None:
+                full = process_declaration_full(raw, cohort_stats=cohort)
+
+            doc_id = raw.get("id", raw.get("doc_id", "unknown"))
             bio = full["bio"]
             score_data = full["score"]
 
@@ -223,6 +255,7 @@ def _ensure_loaded() -> None:
                 "name": name,
                 "role": bio.get("work_post", ""),
                 "institution": bio.get("work_place", ""),
+                "post_type": features.get("post_type", ""),
             }
 
             detail["summary"] = summary
@@ -264,7 +297,7 @@ class StatsResponse(BaseModel):
 def list_declarations(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=500000),
-    min_score: float = Query(default=0.0, ge=0.0, le=1.0),
+    min_score: float = Query(default=0.0, ge=0.0, le=100.0),
     query: str | None = Query(default=None, max_length=120),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:

@@ -127,7 +127,7 @@ def test_list_declarations_limit_validation_error():
 
 
 def test_list_declarations_min_score_validation_error():
-    response = client.get("/api/declarations?min_score=1.2")
+    response = client.get("/api/declarations?min_score=101.0")
     assert response.status_code == 422
     payload = response.json()
     assert payload["error"]["code"] == "validation_error"

@@ -18,9 +18,13 @@ Rules deferred (require multi-year timeline):
 
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+
+from app.normalization.currency import to_uah
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +36,12 @@ class RuleResult:
     """Output of a single scoring rule."""
 
     rule_name: str
-    score: float  # 0.0–1.0 contribution
+    score: float
     triggered: bool
     explanation: str
+    category: str | None = None
+    severity: str | None = None
+    confidence: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -343,11 +350,18 @@ def family_asset_concentration(
 
 @dataclass
 class ScoringResult:
-    """Aggregate scoring result across all rules."""
+    """Aggregate scoring result across all rules.
 
-    total_score: float
+    ``total_score`` is on a native 0–100 scale.
+    """
+
+    total_score: float  # 0–100 scale
     rule_results: list[RuleResult] = field(default_factory=list)
     triggered_rules: list[str] = field(default_factory=list)
+    corruption_risk_score: float = 0.0
+    opacity_evasion_score: float = 0.0
+    data_quality_score: float = 0.0
+    raw_total_score: float = 0.0
 
     @property
     def explanation_summary(self) -> str:
@@ -355,6 +369,105 @@ class ScoringResult:
             return "No anomaly signals detected."
         lines = [f"• {r.explanation}" for r in self.rule_results if r.triggered]
         return "\n".join(lines)
+
+
+def _severity_multiplier(severity: str) -> float:
+    table = {
+        "LOW": 0.5,
+        "MEDIUM": 1.0,
+        "HIGH": 1.5,
+        "EXTREME": 2.0,
+    }
+    return table.get(severity.upper(), 1.0)
+
+
+def _make_flag(
+    *,
+    rule_id: str,
+    category: str,
+    severity: str,
+    base_weight: float,
+    confidence: float,
+    message: str,
+) -> RuleResult:
+    points = base_weight * _severity_multiplier(severity) * confidence
+    return RuleResult(
+        rule_name=rule_id,
+        score=round(points, 3),
+        triggered=True,
+        explanation=message,
+        category=category,
+        severity=severity,
+        confidence=round(confidence, 2),
+    )
+
+
+_YEAR_RE = re.compile(r"(19\d{2}|20\d{2})")
+
+
+def _extract_year(raw_date: Any) -> int | None:
+    if raw_date is None:
+        return None
+    s = str(raw_date).strip()
+    if not s:
+        return None
+    m = _YEAR_RE.search(s)
+    if not m:
+        return None
+    try:
+        year = int(m.group(1))
+    except ValueError:
+        return None
+    if year < 1900 or year > 2100:
+        return None
+    return year
+
+
+def _is_cash_asset(asset_type: Any) -> bool:
+    s = str(asset_type or "").lower()
+    return "готів" in s
+
+
+def _has_any_kw(value: Any, keywords: tuple[str, ...]) -> bool:
+    s = str(value or "").lower()
+    return any(kw in s for kw in keywords)
+
+
+def _legacy_score_declaration(
+    *,
+    total_income: Decimal | None = None,
+    total_assets: Decimal | None = None,
+    cash_holdings: Decimal | None = None,
+    bank_deposits: Decimal | None = None,
+    total_value_fields: int = 0,
+    unknown_value_fields: int = 0,
+    largest_acquisition_cost: Decimal | None = None,
+    ownership_declarant: int = 0,
+    ownership_family: int = 0,
+    ownership_total: int = 0,
+) -> ScoringResult:
+    rules = [
+        unexplained_wealth(total_income, total_assets),
+        cash_to_bank_ratio(cash_holdings, bank_deposits),
+        unknown_value_frequency(total_value_fields, unknown_value_fields),
+        acquisition_income_mismatch(largest_acquisition_cost, total_income),
+        zero_income_with_assets(total_income, total_assets),
+        family_asset_concentration(
+            ownership_declarant, ownership_family, ownership_total,
+        ),
+    ]
+
+    triggered = [r.rule_name for r in rules if r.triggered]
+    raw_total = sum(r.score for r in rules)
+    overall_100 = 100.0 * (1.0 - math.exp(-raw_total / 12.0)) if raw_total > 0 else 0.0
+    overall_100 = round(overall_100, 2)
+
+    return ScoringResult(
+        total_score=overall_100,
+        rule_results=rules,
+        triggered_rules=triggered,
+        corruption_risk_score=round(raw_total, 3),
+    )
 
 
 def score_declaration(
@@ -369,34 +482,670 @@ def score_declaration(
     ownership_declarant: int = 0,
     ownership_family: int = 0,
     ownership_total: int = 0,
+    incomes: list[dict[str, Any]] | None = None,
+    monetary_assets: list[dict[str, Any]] | None = None,
+    real_estate: list[dict[str, Any]] | None = None,
+    vehicles: list[dict[str, Any]] | None = None,
+    family_members: list[dict[str, Any]] | None = None,
+    declaration_year: int | None = None,
+    raw_declaration: dict[str, Any] | None = None,
+    cohort_stats: Any | None = None,
 ) -> ScoringResult:
     """Run all Layer 1 scoring rules and return an aggregate result.
 
     Each input should be pre-computed from the parsed declaration data.
     All monetary values should be in the same currency.
 
+    Parameters
+    ----------
+    cohort_stats:
+        Optional ``CohortStats`` from ``app.scoring.cohorts``. When provided,
+        CR16 cohort-relative outlier rules are evaluated and folded into
+        the corruption-risk score.
+
     Returns
     -------
-    A ``ScoringResult`` with the composite score capped at ``1.0``.
+    A ``ScoringResult`` with the composite score on a 0–100 scale.
     """
-    rules = [
-        unexplained_wealth(total_income, total_assets),
-        cash_to_bank_ratio(cash_holdings, bank_deposits),
-        unknown_value_frequency(total_value_fields, unknown_value_fields),
-        acquisition_income_mismatch(largest_acquisition_cost, total_income),
-        zero_income_with_assets(total_income, total_assets),
-        family_asset_concentration(
-            ownership_declarant, ownership_family, ownership_total,
-        ),
-    ]
+    # Backward-compatible path used by older tests/callers.
+    if incomes is None and monetary_assets is None and real_estate is None and vehicles is None:
+        return _legacy_score_declaration(
+            total_income=total_income,
+            total_assets=total_assets,
+            cash_holdings=cash_holdings,
+            bank_deposits=bank_deposits,
+            total_value_fields=total_value_fields,
+            unknown_value_fields=unknown_value_fields,
+            largest_acquisition_cost=largest_acquisition_cost,
+            ownership_declarant=ownership_declarant,
+            ownership_family=ownership_family,
+            ownership_total=ownership_total,
+        )
 
-    triggered = [r.rule_name for r in rules if r.triggered]
-    total = min(1.0, sum(r.score for r in rules))
+    incomes = incomes or []
+    monetary_assets = monetary_assets or []
+    real_estate = real_estate or []
+    vehicles = vehicles or []
+    family_members = family_members or []
+
+    flags: list[RuleResult] = []
+
+    # ------------------------------
+    # Technical/data-quality checks
+    # ------------------------------
+    bad_dates = 0
+    for r in real_estate:
+        y = _extract_year(r.get("owning_date"))
+        if r.get("owning_date") and (y is None or y < 1900 or (declaration_year and y > declaration_year)):
+            bad_dates += 1
+    for v in vehicles:
+        y = _extract_year(v.get("owning_date"))
+        if v.get("owning_date") and (y is None or y < 1900 or (declaration_year and y > declaration_year)):
+            bad_dates += 1
+    if bad_dates > 0:
+        flags.append(_make_flag(
+            rule_id="TQ1",
+            category="data_quality",
+            severity="LOW",
+            base_weight=1,
+            confidence=1.0,
+            message=f"Found {bad_dates} invalid or out-of-range owning dates.",
+        ))
+
+    family_ids = {str(m.get("member_id")) for m in family_members if m.get("member_id") is not None}
+    known_person_ids = {"1"} | family_ids
+
+    orphan_refs = 0
+    for r in real_estate:
+        rr = str(r.get("right_belongs_resolved") or "")
+        if rr.startswith("unknown:"):
+            orphan_refs += 1
+    for i in incomes:
+        pr = i.get("person_ref")
+        if pr is not None and str(pr) not in known_person_ids:
+            orphan_refs += 1
+    for m in monetary_assets:
+        pr = m.get("person_ref")
+        if pr is not None and str(pr) not in known_person_ids:
+            orphan_refs += 1
+    if orphan_refs > 0:
+        flags.append(_make_flag(
+            rule_id="TQ2",
+            category="data_quality",
+            severity="LOW",
+            base_weight=1,
+            confidence=1.0,
+            message=f"Found {orphan_refs} unresolved ownership/person references.",
+        ))
+
+    share_issue = 0
+    by_asset: dict[str, float] = {}
+    for r in real_estate:
+        key = f"{r.get('raw_iteration')}|{r.get('object_type')}|{r.get('city')}|{r.get('district')}"
+        pct_raw = str(r.get("percent_ownership") or "").replace(",", ".").strip()
+        if not pct_raw:
+            continue
+        try:
+            pct_val = float(pct_raw)
+        except ValueError:
+            continue
+        by_asset[key] = by_asset.get(key, 0.0) + pct_val
+    for total_pct in by_asset.values():
+        if total_pct > 110.0 or (0.0 < total_pct < 10.0):
+            share_issue += 1
+    if share_issue > 0:
+        flags.append(_make_flag(
+            rule_id="TQ3",
+            category="data_quality",
+            severity="LOW",
+            base_weight=1,
+            confidence=0.8,
+            message=f"Found {share_issue} properties with implausible ownership-share totals.",
+        ))
+
+    parse_or_extreme = 0
+    for i in incomes:
+        if i.get("amount_status") == "parse_error":
+            parse_or_extreme += 1
+        amt = i.get("amount")
+        if amt is not None and Decimal(amt) > Decimal("10000000000"):
+            parse_or_extreme += 1
+    for m in monetary_assets:
+        if m.get("amount_status") == "parse_error":
+            parse_or_extreme += 1
+        amt = m.get("amount")
+        if amt is not None:
+            uah = to_uah(amt, m.get("currency_code"))
+            if uah is not None and uah > Decimal("10000000000"):
+                parse_or_extreme += 1
+    for r in real_estate:
+        area = r.get("total_area")
+        if area is not None and Decimal(area) > Decimal("10000000"):
+            parse_or_extreme += 1
+        if r.get("total_area_status") == "parse_error" or r.get("cost_assessment_status") == "parse_error":
+            parse_or_extreme += 1
+    if parse_or_extreme > 0:
+        flags.append(_make_flag(
+            rule_id="TQ4",
+            category="data_quality",
+            severity="LOW",
+            base_weight=1,
+            confidence=1.0,
+            message=f"Found {parse_or_extreme} non-parsable or extreme numeric values.",
+        ))
+
+    # ------------------------------
+    # Corruption-risk checks
+    # ------------------------------
+    legacy_cash_rule = cash_to_bank_ratio(cash_holdings, bank_deposits)
+    if legacy_cash_rule.triggered:
+        flags.append(RuleResult(
+            rule_name=legacy_cash_rule.rule_name,
+            score=legacy_cash_rule.score,
+            triggered=True,
+            explanation=legacy_cash_rule.explanation,
+            category="corruption",
+            severity="MEDIUM",
+            confidence=1.0,
+        ))
+
+    inc_val = Decimal(total_income) if total_income is not None else None
+    cash_val = Decimal(cash_holdings) if cash_holdings is not None else None
+
+    if inc_val is not None and cash_val is not None and inc_val >= Decimal("10000") and inc_val > 0:
+        ratio = float(cash_val / inc_val)
+        if ratio >= 10:
+            flags.append(_make_flag(
+                rule_id="CR1",
+                category="corruption",
+                severity="EXTREME",
+                base_weight=5,
+                confidence=1.0,
+                message=f"Cash-to-income ratio is {ratio:.1f}x (>= 10x).",
+            ))
+        elif ratio >= 5:
+            flags.append(_make_flag(
+                rule_id="CR1",
+                category="corruption",
+                severity="HIGH",
+                base_weight=5,
+                confidence=1.0,
+                message=f"Cash-to-income ratio is {ratio:.1f}x (>= 5x).",
+            ))
+        elif ratio >= 3:
+            flags.append(_make_flag(
+                rule_id="CR1",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=5,
+                confidence=1.0,
+                message=f"Cash-to-income ratio is {ratio:.1f}x (>= 3x).",
+            ))
+
+    fx_cash = Decimal(0)
+    total_cash_detected = Decimal(0)
+    for m in monetary_assets:
+        if not _is_cash_asset(m.get("asset_type")):
+            continue
+        uah = to_uah(m.get("amount"), m.get("currency_code"))
+        if uah is None:
+            continue
+        total_cash_detected += uah
+        if (m.get("currency_code") or "").upper() != "UAH":
+            fx_cash += uah
+    fx_share = float(fx_cash / total_cash_detected) if total_cash_detected > 0 else 0.0
+    if inc_val is not None and inc_val > 0 and total_cash_detected > 0:
+        fx_to_income = float(fx_cash / inc_val)
+        if fx_share >= 0.7 and fx_to_income >= 3:
+            flags.append(_make_flag(
+                rule_id="CR2",
+                category="corruption",
+                severity="HIGH",
+                base_weight=4,
+                confidence=1.0,
+                message=f"FX cash dominates holdings ({fx_share:.0%}) and equals {fx_to_income:.1f}x annual income.",
+            ))
+        elif fx_share >= 0.5 and fx_to_income >= 1.5:
+            flags.append(_make_flag(
+                rule_id="CR2",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=4,
+                confidence=1.0,
+                message=f"High FX-cash concentration ({fx_share:.0%}) with FX cash {fx_to_income:.1f}x income.",
+            ))
+
+    if inc_val is not None and inc_val > 0:
+        acq_costs: list[Decimal] = []
+        for r in real_estate:
+            c = r.get("cost_assessment")
+            if c is None:
+                continue
+            y = _extract_year(r.get("owning_date"))
+            if declaration_year is None or y == declaration_year:
+                acq_costs.append(Decimal(c))
+        for v in vehicles:
+            c = v.get("cost_date")
+            if c is None:
+                continue
+            y = _extract_year(v.get("owning_date"))
+            if declaration_year is None or y == declaration_year:
+                acq_costs.append(Decimal(c))
+
+        one_off_income = Decimal(0)
+        for i in incomes:
+            text = f"{i.get('income_type') or ''} {i.get('source_type') or ''} {i.get('income_type_other') or ''}".lower()
+            if any(kw in text for kw in ("спад", "inherit", "sale", "продаж", "gift", "дар")):
+                amt = i.get("amount")
+                if amt is not None:
+                    one_off_income += Decimal(amt)
+
+        best_ratio = 0.0
+        best_cost = None
+        best_sev = None
+        for cost in acq_costs:
+            ratio = float(cost / inc_val)
+            sev = None
+            if ratio >= 7:
+                sev = "EXTREME"
+            elif ratio >= 3:
+                sev = "HIGH"
+            elif ratio >= 2:
+                sev = "MEDIUM"
+            if sev and ratio > best_ratio:
+                best_ratio = ratio
+                best_cost = cost
+                best_sev = sev
+
+        if best_sev is not None and best_cost is not None:
+            downgraded = False
+            if one_off_income >= best_cost * Decimal("0.6"):
+                downgraded = True
+                if best_sev == "EXTREME":
+                    best_sev = "HIGH"
+                elif best_sev == "HIGH":
+                    best_sev = "MEDIUM"
+            msg = f"Largest same-year acquisition is {best_cost:,.0f} UAH ({best_ratio:.1f}x income)."
+            if downgraded:
+                msg += " Severity reduced due to matching one-off income signal."
+            flags.append(_make_flag(
+                rule_id="CR3",
+                category="corruption",
+                severity=best_sev,
+                base_weight=5,
+                confidence=0.9,
+                message=msg,
+            ))
+
+    if inc_val is not None and inc_val < Decimal("150000"):
+        count_mid_hi = 0
+        for r in real_estate:
+            cost = r.get("cost_assessment")
+            area = r.get("total_area")
+            obj = str(r.get("object_type") or "").lower()
+            if cost is not None and Decimal(cost) >= Decimal("500000"):
+                count_mid_hi += 1
+                continue
+            if area is not None and Decimal(area) >= Decimal("10000") and cost is not None and Decimal(cost) >= Decimal("300000"):
+                count_mid_hi += 1
+                continue
+            if "зем" in obj and area is not None and Decimal(area) >= Decimal("10000") and cost is not None and Decimal(cost) >= Decimal("300000"):
+                count_mid_hi += 1
+        for v in vehicles:
+            cost = v.get("cost_date")
+            if cost is not None and Decimal(cost) >= Decimal("300000"):
+                count_mid_hi += 1
+        if count_mid_hi >= 2:
+            flags.append(_make_flag(
+                rule_id="CR4",
+                category="corruption",
+                severity="HIGH",
+                base_weight=4,
+                confidence=0.9,
+                message=f"Low-income year with {count_mid_hi} medium/high-value acquisitions.",
+            ))
+
+    dwelling_area = Decimal(0)
+    agri_area = Decimal(0)
+    for r in real_estate:
+        area = r.get("total_area")
+        if area is None:
+            continue
+        obj = str(r.get("object_type") or "").lower()
+        if any(kw in obj for kw in ("кварт", "буд", "жит")):
+            dwelling_area += Decimal(area)
+        if "зем" in obj:
+            agri_area += Decimal(area)
+    if dwelling_area > Decimal("400"):
+        flags.append(_make_flag(
+            rule_id="CR6",
+            category="corruption",
+            severity="HIGH",
+            base_weight=3,
+            confidence=0.8,
+            message=f"Total dwelling area is {dwelling_area:,.0f} m2 (> 400 m2).",
+        ))
+    elif dwelling_area > Decimal("250"):
+        flags.append(_make_flag(
+            rule_id="CR6",
+            category="corruption",
+            severity="MEDIUM",
+            base_weight=3,
+            confidence=0.8,
+            message=f"Total dwelling area is {dwelling_area:,.0f} m2 (> 250 m2).",
+        ))
+    if agri_area > Decimal("500000"):
+        flags.append(_make_flag(
+            rule_id="CR6",
+            category="corruption",
+            severity="HIGH",
+            base_weight=3,
+            confidence=0.8,
+            message=f"Agricultural land area is {agri_area:,.0f} m2 (> 50 ha).",
+        ))
+    elif agri_area > Decimal("100000"):
+        flags.append(_make_flag(
+            rule_id="CR6",
+            category="corruption",
+            severity="MEDIUM",
+            base_weight=3,
+            confidence=0.8,
+            message=f"Agricultural land area is {agri_area:,.0f} m2 (> 10 ha).",
+        ))
+
+    luxury_count = 0
+    for v in vehicles:
+        brand_model = f"{v.get('brand') or ''} {v.get('model') or ''}".lower()
+        if any(kw in brand_model for kw in (
+            "bmw", "mercedes", "range rover", "porsche", "lexus", "audi", "tesla",
+        )):
+            luxury_count += 1
+
+    if inc_val is not None:
+        if luxury_count >= 2 and inc_val < Decimal("1000000"):
+            flags.append(_make_flag(
+                rule_id="CR7",
+                category="corruption",
+                severity="HIGH",
+                base_weight=3,
+                confidence=0.9,
+                message=f"{luxury_count} luxury vehicles with household income below 1,000,000 UAH.",
+            ))
+        elif luxury_count >= 1 and inc_val < Decimal("600000"):
+            flags.append(_make_flag(
+                rule_id="CR7",
+                category="corruption",
+                severity="MEDIUM",
+                base_weight=3,
+                confidence=0.9,
+                message="Luxury vehicle ownership with household income below 600,000 UAH.",
+            ))
+
+    child_markers = ("дит", "child", "син", "донь")
+    adult_family = sum(1 for m in family_members if not _has_any_kw(m.get("relation"), child_markers))
+    adults = max(1, 1 + adult_family)
+    vehicles_per_adult = len(vehicles) / adults if adults else 0.0
+    if vehicles_per_adult >= 3.5:
+        flags.append(_make_flag(
+            rule_id="CR7",
+            category="corruption",
+            severity="HIGH",
+            base_weight=3,
+            confidence=0.8,
+            message=f"Vehicles per adult ratio is {vehicles_per_adult:.2f} (>= 3.5).",
+        ))
+    elif inc_val is not None and inc_val < Decimal("500000") and vehicles_per_adult >= 2.5:
+        flags.append(_make_flag(
+            rule_id="CR7",
+            category="corruption",
+            severity="MEDIUM",
+            base_weight=3,
+            confidence=0.8,
+            message=f"Vehicles per adult ratio is {vehicles_per_adult:.2f} in a low-income household.",
+        ))
+
+    agri_machine = any(_has_any_kw(v.get("object_type"), ("тракт", "комбай", "harvest")) for v in vehicles)
+    has_agri_assets = agri_area >= Decimal("100000") or agri_machine
+    agri_income = Decimal(0)
+    for i in incomes:
+        txt = f"{i.get('income_type') or ''} {i.get('source_type') or ''} {i.get('income_type_other') or ''}".lower()
+        if any(kw in txt for kw in ("агро", "ферм", "сг", "оренд", "rent")):
+            amt = i.get("amount")
+            if amt is not None:
+                agri_income += Decimal(amt)
+    if has_agri_assets and agri_income == 0:
+        flags.append(_make_flag(
+            rule_id="CR8",
+            category="corruption",
+            severity="HIGH" if agri_area >= Decimal("500000") else "MEDIUM",
+            base_weight=3,
+            confidence=0.8,
+            message="Agricultural assets detected without corresponding agri/rent income.",
+        ))
+
+    major_city_names = ("київ", "kyiv", "льв", "lviv", "одес", "odesa", "харк", "khark")
+    commercial_count = 0
+    city_apartment_count = 0
+    for r in real_estate:
+        obj = str(r.get("object_type") or "").lower()
+        city = str(r.get("city") or "").lower()
+        if any(kw in obj for kw in ("нежит", "офіс", "магаз", "комер")):
+            commercial_count += 1
+        if "кварт" in obj and any(c in city for c in major_city_names):
+            city_apartment_count += 1
+    rent_income = Decimal(0)
+    for i in incomes:
+        txt = f"{i.get('income_type') or ''} {i.get('source_type') or ''} {i.get('income_type_other') or ''}".lower()
+        if any(kw in txt for kw in ("оренд", "rent", "бізнес", "business", "підприєм")):
+            amt = i.get("amount")
+            if amt is not None:
+                rent_income += Decimal(amt)
+    rentable_objects = commercial_count + city_apartment_count
+    if rentable_objects > 0 and rent_income < Decimal("30000"):
+        flags.append(_make_flag(
+            rule_id="CR9",
+            category="corruption",
+            severity="HIGH" if rentable_objects >= 3 else "MEDIUM",
+            base_weight=3,
+            confidence=0.7,
+            message=f"{rentable_objects} potentially rentable objects with low/no rent-business income.",
+        ))
+
+    major_unknown_count = 0
+    largest_dwelling_unknown = False
+    largest_dwelling_area = Decimal(0)
+    for r in real_estate:
+        obj = str(r.get("object_type") or "").lower()
+        status = str(r.get("cost_assessment_status") or "")
+        if any(kw in obj for kw in ("кварт", "буд", "жит", "зем")) and status in {"unknown", "family_no_info", "confidential", "redacted_other"}:
+            major_unknown_count += 1
+        area = r.get("total_area")
+        if area is not None and any(kw in obj for kw in ("кварт", "буд", "жит")):
+            area_d = Decimal(area)
+            if area_d > largest_dwelling_area:
+                largest_dwelling_area = area_d
+                largest_dwelling_unknown = status in {"unknown", "family_no_info", "confidential", "redacted_other"}
+    if largest_dwelling_unknown or major_unknown_count >= 1:
+        sev = "HIGH" if (major_unknown_count >= 2 or largest_dwelling_unknown and major_unknown_count >= 1) else "MEDIUM"
+        flags.append(_make_flag(
+            rule_id="CR10",
+            category="opacity",
+            severity=sev,
+            base_weight=4,
+            confidence=0.9,
+            message="Unknown valuations detected on major assets.",
+        ))
+
+    # CR11: spouse/child major ownership with low independent income.
+    relation_by_id: dict[str, str] = {str(m.get("member_id")): str(m.get("relation") or "") for m in family_members}
+    income_by_person: dict[str, Decimal] = {}
+    for i in incomes:
+        pr = i.get("person_ref")
+        amt = i.get("amount")
+        if pr is None or amt is None:
+            continue
+        k = str(pr)
+        income_by_person[k] = income_by_person.get(k, Decimal(0)) + Decimal(amt)
+
+    major_proxy_detected = False
+    for r in real_estate:
+        pid = str(r.get("right_belongs_raw") or "")
+        rel = relation_by_id.get(pid, "").lower()
+        if pid in relation_by_id and any(kw in rel for kw in ("друж", "чолов", "дит", "child", "син", "дон")):
+            pct = str(r.get("percent_ownership") or "").replace(",", ".")
+            try:
+                pct_v = float(pct)
+            except ValueError:
+                pct_v = None
+            obj = str(r.get("object_type") or "").lower()
+            is_main = any(kw in obj for kw in ("кварт", "буд", "жит"))
+            cost = r.get("cost_assessment")
+            if (pct_v is not None and pct_v >= 99.0 and (is_main or (cost is not None and Decimal(cost) >= Decimal("500000")))):
+                if income_by_person.get(pid, Decimal(0)) < Decimal("100000"):
+                    major_proxy_detected = True
+                    break
+    if not major_proxy_detected:
+        for m in monetary_assets:
+            pid = str(m.get("person_ref") or "")
+            rel = relation_by_id.get(pid, "").lower()
+            if pid in relation_by_id and any(kw in rel for kw in ("друж", "чолов", "дит", "child", "син", "дон")):
+                amt_uah = to_uah(m.get("amount"), m.get("currency_code"))
+                if amt_uah is not None and amt_uah >= Decimal("500000") and income_by_person.get(pid, Decimal(0)) < Decimal("100000"):
+                    major_proxy_detected = True
+                    break
+    if major_proxy_detected:
+        flags.append(_make_flag(
+            rule_id="CR11",
+            category="corruption",
+            severity="HIGH",
+            base_weight=5,
+            confidence=0.8,
+            message="Spouse/child appears as major asset owner with low independent income.",
+        ))
+
+    # CR13: repeated family-no-info on key fields.
+    family_no_info_count = 0
+    for r in real_estate:
+        pid = str(r.get("right_belongs_raw") or "")
+        if pid in family_ids:
+            if r.get("cost_assessment_status") == "family_no_info":
+                family_no_info_count += 1
+            if r.get("total_area_status") == "family_no_info":
+                family_no_info_count += 1
+    for m in monetary_assets:
+        pid = str(m.get("person_ref") or "")
+        if pid in family_ids:
+            if m.get("amount_status") == "family_no_info":
+                family_no_info_count += 1
+            if m.get("organization_status") == "family_no_info":
+                family_no_info_count += 1
+    if family_no_info_count >= 3:
+        flags.append(_make_flag(
+            rule_id="CR13",
+            category="opacity",
+            severity="HIGH",
+            base_weight=5,
+            confidence=1.0,
+            message=f"Family no-information markers appear {family_no_info_count} times on key asset fields.",
+        ))
+
+    # ------------------------------
+    # CR16 — Cohort-relative outliers
+    # ------------------------------
+    if cohort_stats is not None:
+        from app.scoring.cohorts import compute_percentile_rank
+
+        # Income outlier — top 1% of cohort
+        if inc_val is not None and len(getattr(cohort_stats, 'incomes', [])) >= 5:
+            pct = compute_percentile_rank(float(inc_val), cohort_stats.incomes)
+            if pct >= 0.99:
+                flags.append(_make_flag(
+                    rule_id="CR16",
+                    category="corruption",
+                    severity="MEDIUM",
+                    base_weight=3,
+                    confidence=0.8,
+                    message=f"Household income is at {pct:.0%} percentile of cohort peers.",
+                ))
+
+        # Wealth outlier — top 1% HIGH, top 5% MEDIUM
+        if total_assets is not None and len(getattr(cohort_stats, 'assets', [])) >= 5:
+            assets_float = float(total_assets)
+            pct = compute_percentile_rank(assets_float, cohort_stats.assets)
+            if pct >= 0.99:
+                flags.append(_make_flag(
+                    rule_id="CR16",
+                    category="corruption",
+                    severity="HIGH",
+                    base_weight=3,
+                    confidence=0.8,
+                    message=f"Total assets at {pct:.0%} percentile of cohort peers (top 1%).",
+                ))
+            elif pct >= 0.95:
+                flags.append(_make_flag(
+                    rule_id="CR16",
+                    category="corruption",
+                    severity="MEDIUM",
+                    base_weight=3,
+                    confidence=0.8,
+                    message=f"Total assets at {pct:.0%} percentile of cohort peers (top 5%).",
+                ))
+
+        # Cash outlier — top 1% with high FX share
+        if cash_holdings is not None and len(getattr(cohort_stats, 'cash_ratios', [])) >= 5:
+            cash_float = float(cash_holdings)
+            cash_pct = compute_percentile_rank(
+                cash_float / float(inc_val) if inc_val and inc_val > 0 else 0.0,
+                cohort_stats.cash_ratios,
+            )
+            if cash_pct >= 0.99 and fx_share >= 0.5:
+                flags.append(_make_flag(
+                    rule_id="CR16",
+                    category="corruption",
+                    severity="HIGH",
+                    base_weight=3,
+                    confidence=0.8,
+                    message=f"Cash-to-income ratio at {cash_pct:.0%} percentile with {fx_share:.0%} FX concentration.",
+                ))
+
+    # ------------------------------
+    # Aggregation and weighted total
+    # ------------------------------
+    raw_corruption = sum(r.score for r in flags if r.category == "corruption")
+    raw_opacity = sum(r.score for r in flags if r.category == "opacity")
+    raw_quality = sum(r.score for r in flags if r.category == "data_quality")
+
+    raw_quality_capped = min(2.0, raw_quality)
+
+    if raw_corruption <= 0 and raw_opacity > 0:
+        raw_opacity = min(raw_opacity, raw_corruption * 0.25)
+
+    triggered_ids = {r.rule_name for r in flags}
+    interaction_bonus = 0.0
+    if "CR1" in triggered_ids and "CR2" in triggered_ids:
+        interaction_bonus += 3.0
+    if "CR10" in triggered_ids and "CR13" in triggered_ids:
+        interaction_bonus += 3.0
+
+    raw_total = raw_corruption + 0.5 * raw_opacity + 0.1 * raw_quality_capped + interaction_bonus
+    overall_100 = 100.0 * (1.0 - math.exp(-raw_total / 12.0)) if raw_total > 0 else 0.0
+    overall_100 = round(overall_100, 2)
+
+    triggered: list[str] = []
+    seen_rules: set[str] = set()
+    for r in flags:
+        if r.triggered and r.rule_name not in seen_rules:
+            triggered.append(r.rule_name)
+            seen_rules.add(r.rule_name)
 
     return ScoringResult(
-        total_score=round(total, 3),
-        rule_results=rules,
+        total_score=overall_100,
+        rule_results=flags,
         triggered_rules=triggered,
+        corruption_risk_score=round(raw_corruption, 3),
+        opacity_evasion_score=round(raw_opacity, 3),
+        data_quality_score=round(raw_quality_capped, 3),
+        raw_total_score=round(raw_total, 3),
     )
 
 
@@ -546,14 +1295,152 @@ def foreign_cash_jump(
 
 
 # ---------------------------------------------------------------------------
+# CR5 — Asset growth vs income growth (timeline rule)
+# ---------------------------------------------------------------------------
+
+def cr5_asset_vs_income_growth(change: Any) -> RuleResult:
+    """CR5: Flag when assets grow significantly faster than income.
+
+    Parameters
+    ----------
+    change:
+        A ``YOYChange`` with ``asset_growth`` and ``income_growth``.
+    """
+    rule = "CR5"
+
+    ag = change.asset_growth
+    ig = change.income_growth
+
+    if ag is None:
+        return RuleResult(rule, 0.0, False, "Insufficient asset data for growth comparison.")
+
+    if ag >= 0.5 and (ig is None or ig <= 0.1):
+        return _make_flag(
+            rule_id=rule,
+            category="corruption",
+            severity="HIGH",
+            base_weight=5,
+            confidence=0.9,
+            message=(
+                f"Assets grew {ag:.0%} year-over-year ({change.from_year}→{change.to_year}) "
+                f"while income grew only {ig:.0%}." if ig is not None
+                else f"Assets grew {ag:.0%} ({change.from_year}→{change.to_year}) with no income data."
+            ),
+        )
+
+    if ag >= 0.2 and ig is not None and ig <= 0:
+        return _make_flag(
+            rule_id=rule,
+            category="corruption",
+            severity="MEDIUM",
+            base_weight=5,
+            confidence=0.8,
+            message=(
+                f"Assets grew {ag:.0%} ({change.from_year}→{change.to_year}) "
+                f"while income declined by {ig:.0%}."
+            ),
+        )
+
+    return RuleResult(rule, 0.0, False, "Asset and income growth within normal range.")
+
+
+# ---------------------------------------------------------------------------
+# BR2 — Growth in share of unknown values over time (timeline rule)
+# ---------------------------------------------------------------------------
+
+def br2_unknown_share_growth(change: Any) -> RuleResult:
+    """BR2: Flag when the share of unknown/hidden values increases over time.
+
+    Parameters
+    ----------
+    change:
+        A ``YOYChange`` with ``unknown_share_prev``, ``unknown_share_curr``,
+        ``unknown_share_delta``.
+    """
+    rule = "BR2"
+
+    delta = change.unknown_share_delta
+    curr = change.unknown_share_curr
+
+    if delta >= 0.3 and curr >= 0.5:
+        return _make_flag(
+            rule_id=rule,
+            category="opacity",
+            severity="MEDIUM",
+            base_weight=2,
+            confidence=0.9,
+            message=(
+                f"Unknown-value share rose from {change.unknown_share_prev:.0%} "
+                f"to {curr:.0%} ({change.from_year}→{change.to_year}) — "
+                f"increasing opacity trend."
+            ),
+        )
+
+    return RuleResult(rule, 0.0, False, "Unknown-value share trend within normal range.")
+
+
+# ---------------------------------------------------------------------------
+# BR4 — Role change followed by wealth jump (timeline rule)
+# ---------------------------------------------------------------------------
+
+def br4_role_change_wealth_jump(change: Any) -> RuleResult:
+    """BR4: Flag when a role change is followed by significant asset growth.
+
+    Parameters
+    ----------
+    change:
+        A ``YOYChange`` with ``role_changed`` and ``asset_growth``.
+    """
+    rule = "BR4"
+
+    if not change.role_changed:
+        return RuleResult(rule, 0.0, False, "No role change detected.")
+
+    ag = change.asset_growth
+    if ag is None:
+        return RuleResult(rule, 0.0, False, "Role changed but no asset data for comparison.")
+
+    if ag >= 1.0:
+        return _make_flag(
+            rule_id=rule,
+            category="corruption",
+            severity="HIGH",
+            base_weight=2,
+            confidence=0.8,
+            message=(
+                f"Role changed ({change.from_year}→{change.to_year}) with "
+                f"assets growing {ag:.0%} — major post-promotion wealth jump."
+            ),
+        )
+
+    if ag >= 0.5:
+        return _make_flag(
+            rule_id=rule,
+            category="corruption",
+            severity="MEDIUM",
+            base_weight=2,
+            confidence=0.7,
+            message=(
+                f"Role changed ({change.from_year}→{change.to_year}) with "
+                f"assets growing {ag:.0%} — significant post-promotion wealth increase."
+            ),
+        )
+
+    return RuleResult(rule, 0.0, False, "Role changed but asset growth within normal range.")
+
+
+# ---------------------------------------------------------------------------
 # Timeline composite scorer
 # ---------------------------------------------------------------------------
 
 @dataclass
 class TimelineScoringResult:
-    """Scoring result for a multi-year person timeline."""
+    """Scoring result for a multi-year person timeline.
 
-    total_score: float
+    ``total_score`` is on a native 0–100 scale.
+    """
+
+    total_score: float  # 0–100 scale
     rule_results: list[RuleResult] = field(default_factory=list)
     triggered_rules: list[str] = field(default_factory=list)
 
@@ -568,17 +1455,25 @@ class TimelineScoringResult:
 def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
     """Run temporal scoring rules against a PersonTimeline.
 
-    Uses the worst-case year-over-year change across all consecutive pairs.
+    Evaluates the worst-case year-over-year change across all consecutive
+    pairs and also runs CR5, BR2, and BR4 rules.
+
+    Returns a ``TimelineScoringResult`` on a 0–100 scale.
     """
     from app.normalization.assemble_timeline import PersonTimeline as TL
 
     if not timeline.changes:
         return TimelineScoringResult(total_score=0.0)
 
-    # Find the change pair with the worst income and asset signals
+    # --- Existing YOY rules (worst-case across all pairs) ---
     worst_income_rule = RuleResult("yoy_income_change", 0.0, False, "No changes to assess.")
     worst_asset_rule = RuleResult("yoy_asset_growth", 0.0, False, "No changes to assess.")
     worst_cash_rule = RuleResult("foreign_cash_jump", 0.0, False, "No changes to assess.")
+
+    # --- New timeline rules (CR5, BR2, BR4) —  worst-case across all pairs ---
+    worst_cr5 = RuleResult("CR5", 0.0, False, "No changes to assess.")
+    worst_br2 = RuleResult("BR2", 0.0, False, "No changes to assess.")
+    worst_br4 = RuleResult("BR4", 0.0, False, "No changes to assess.")
 
     for change in timeline.changes:
         ir = year_over_year_income_change(change.income_prev, change.income_curr)
@@ -595,12 +1490,43 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
         if cr.score > worst_cash_rule.score:
             worst_cash_rule = cr
 
-    rules = [worst_income_rule, worst_asset_rule, worst_cash_rule]
+        # CR5
+        c5 = cr5_asset_vs_income_growth(change)
+        if c5.score > worst_cr5.score:
+            worst_cr5 = c5
+
+        # BR2
+        b2 = br2_unknown_share_growth(change)
+        if b2.score > worst_br2.score:
+            worst_br2 = b2
+
+        # BR4
+        b4 = br4_role_change_wealth_jump(change)
+        if b4.score > worst_br4.score:
+            worst_br4 = b4
+
+    rules = [
+        worst_income_rule, worst_asset_rule, worst_cash_rule,
+        worst_cr5, worst_br2, worst_br4,
+    ]
     triggered = [r.rule_name for r in rules if r.triggered]
-    total = min(1.0, sum(r.score for r in rules))
+
+    # Weighted aggregation for timeline (same approach as declaration scorer)
+    raw_corruption = sum(
+        r.score for r in rules
+        if getattr(r, "category", None) == "corruption" or r.rule_name in {
+            "yoy_income_change", "yoy_asset_growth", "foreign_cash_jump",
+        }
+    )
+    raw_opacity = sum(r.score for r in rules if getattr(r, "category", None) == "opacity")
+
+    raw_total = raw_corruption + 0.5 * raw_opacity
+    overall_100 = 100.0 * (1.0 - math.exp(-raw_total / 12.0)) if raw_total > 0 else 0.0
+    overall_100 = round(overall_100, 2)
 
     return TimelineScoringResult(
-        total_score=round(total, 3),
+        total_score=overall_100,
         rule_results=rules,
         triggered_rules=triggered,
     )
+

@@ -179,7 +179,7 @@ def main() -> None:
             f"{str(tl.user_declarant_id):<{col_id}} "
             f"{tl.name[:col_name]:<{col_name}} "
             f"{years_covered[:col_yrs]:<{col_yrs}} "
-            f"{score:>{col_sc}.3f} "
+            f"{score:>{col_sc}.1f} "
             f"{income_ratio:>{col_inc}} "
             f"{monetary_ratio:>{col_mon}} "
             f"{flags}"
