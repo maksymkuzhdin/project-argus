@@ -53,17 +53,21 @@ test.describe("Project Argus E2E Smoke Tests", () => {
    */
   test("should navigate to declaration detail and display scores/rules", async ({
     page,
-    context,
   }) => {
-    // Intercept API calls to verify data fetching
+    // Capture API responses to verify data fetching
     const apiResponses: Record<string, object> = {};
 
-    await context.route(`${API_URL}/**`, async (route) => {
-      const response = await route.continue();
-      const url = route.request().url();
+    page.on("response", async (response) => {
+      const url = response.url();
+      if (!url.startsWith(API_URL)) {
+        return;
+      }
       if (response.ok()) {
         try {
-          apiResponses[url] = await response.json();
+          const contentType = response.headers()["content-type"] || "";
+          if (contentType.includes("application/json")) {
+            apiResponses[url] = await response.json();
+          }
         } catch {
           // Ignore non-JSON responses
         }
@@ -114,16 +118,20 @@ test.describe("Project Argus E2E Smoke Tests", () => {
    */
   test("should navigate to person timeline and display year-over-year changes", async ({
     page,
-    context,
   }) => {
     const apiResponses: Record<string, object> = {};
 
-    await context.route(`${API_URL}/**`, async (route) => {
-      const response = await route.continue();
-      const url = route.request().url();
+    page.on("response", async (response) => {
+      const url = response.url();
+      if (!url.startsWith(API_URL)) {
+        return;
+      }
       if (response.ok()) {
         try {
-          apiResponses[url] = await response.json();
+          const contentType = response.headers()["content-type"] || "";
+          if (contentType.includes("application/json")) {
+            apiResponses[url] = await response.json();
+          }
         } catch {
           // Ignore non-JSON responses
         }

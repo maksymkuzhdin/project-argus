@@ -128,6 +128,31 @@ def _make_client() -> TestClient:
     return TestClient(app)
 
 
+def _make_client_with_extra_seed(extra_seed) -> TestClient:
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    with TestingSessionLocal() as seed_session:
+        _seed_declarations(seed_session)
+        extra_seed(seed_session)
+        seed_session.commit()
+
+    def _override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override_get_db
+    return TestClient(app)
+
+
 def test_db_path_list_and_stats() -> None:
     client = _make_client()
     try:
@@ -170,5 +195,75 @@ def test_db_path_declaration_detail_and_person_timeline() -> None:
         assert person["user_declarant_id"] == 777
         assert person["snapshot_count"] == 2
         assert len(person["changes"]) == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_db_path_person_timeline_handles_sparse_monetary_rows() -> None:
+    def _seed_sparse_rows(db_session) -> None:
+        db_session.add_all(
+            [
+                DeclarantProfile(
+                    declaration_id="doc-sparse-1",
+                    user_declarant_id=888,
+                    declaration_year=2023,
+                    declaration_type=1,
+                    firstname="Sparse",
+                    lastname="Case",
+                    work_post="Inspector",
+                    work_place="Regional Office",
+                    post_type="B",
+                ),
+                DeclarantProfile(
+                    declaration_id="doc-sparse-2",
+                    user_declarant_id=888,
+                    declaration_year=2024,
+                    declaration_type=1,
+                    firstname="Sparse",
+                    lastname="Case",
+                    work_post="Inspector",
+                    work_place="Regional Office",
+                    post_type="B",
+                ),
+                IncomeEntry(
+                    declaration_id="doc-sparse-1",
+                    person_ref="1",
+                    income_type="salary",
+                    amount=Decimal("90000"),
+                ),
+                IncomeEntry(
+                    declaration_id="doc-sparse-2",
+                    person_ref="1",
+                    income_type="salary",
+                    amount=Decimal("95000"),
+                ),
+                MonetaryAsset(
+                    declaration_id="doc-sparse-1",
+                    person_ref="1",
+                    asset_type="cash",
+                    currency_code="UAH",
+                    amount=None,
+                    organization_status="unknown",
+                ),
+                MonetaryAsset(
+                    declaration_id="doc-sparse-2",
+                    person_ref="1",
+                    asset_type="cash",
+                    currency_code="UAH",
+                    amount=Decimal("1000"),
+                ),
+            ]
+        )
+
+    client = _make_client_with_extra_seed(_seed_sparse_rows)
+    try:
+        person_response = client.get("/api/persons/888")
+        assert person_response.status_code == 200
+        payload = person_response.json()
+
+        assert payload["user_declarant_id"] == 888
+        assert payload["snapshot_count"] == 2
+        assert len(payload["changes"]) == 1
+        assert "timeline_score" in payload
     finally:
         app.dependency_overrides.clear()
