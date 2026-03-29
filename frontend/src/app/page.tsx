@@ -81,6 +81,21 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
     if (query) params.set("query", query);
     return `/?${params.toString()}`;
   };
+  const currentDashboardHref = buildPageHref(page);
+  const buildSortHref = (field: "name" | "year" | "income" | "assets" | "score") => {
+    const nextDir = sortBy === field && sortDir === "desc" ? "asc" : "desc";
+    const params = new URLSearchParams({
+      page: "1",
+      sort_by: field,
+      sort_dir: nextDir,
+    });
+    if (query) params.set("query", query);
+    return `/?${params.toString()}`;
+  };
+  const sortArrow = (field: "name" | "year" | "income" | "assets" | "score") => {
+    if (sortBy !== field) return "↕";
+    return sortDir === "asc" ? "↑" : "↓";
+  };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -148,35 +163,37 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
             </form>
           </div>
 
-          <form action="/" method="GET" className="flex flex-wrap items-center gap-2 text-sm">
-            <input type="hidden" name="page" value="1" />
-            <input type="hidden" name="query" value={query} />
-            <label htmlFor="sort_by" className="text-zinc-500">Sort by</label>
-            <select id="sort_by" name="sort_by" defaultValue={sortBy} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-amber-500">
-              <option value="score">Score</option>
-              <option value="income">Income</option>
-              <option value="assets">Assets</option>
-              <option value="name">Name</option>
-              <option value="year">Year</option>
-            </select>
-            <select id="sort_dir" name="sort_dir" defaultValue={sortDir} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-amber-500">
-              <option value="desc">Descending</option>
-              <option value="asc">Ascending</option>
-            </select>
-            <button type="submit" className="bg-zinc-800 text-zinc-100 rounded-md px-3 py-1.5 hover:bg-zinc-700 transition-colors">Apply Sort</button>
-          </form>
-
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden" data-testid="declarations-list">
             <table className="w-full text-left text-sm">
               <thead className="bg-zinc-900 text-zinc-500 border-b border-zinc-800">
                 <tr>
-                  <th className="px-6 py-4 font-medium">Declarant</th>
-                  <th className="px-6 py-4 font-medium text-center">Year</th>
+                  <th className="px-6 py-4 font-medium">
+                    <Link href={buildSortHref("name")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                      Declarant <span className="text-xs">{sortArrow("name")}</span>
+                    </Link>
+                  </th>
+                  <th className="px-6 py-4 font-medium text-center">
+                    <Link href={buildSortHref("year")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                      Year <span className="text-xs">{sortArrow("year")}</span>
+                    </Link>
+                  </th>
                   <th className="px-6 py-4 font-medium">Institution / Role</th>
-                  <th className="px-6 py-4 font-medium text-right">Income</th>
-                  <th className="px-6 py-4 font-medium text-right">Assets</th>
+                  <th className="px-6 py-4 font-medium text-right">
+                    <Link href={buildSortHref("income")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                      Income <span className="text-xs">{sortArrow("income")}</span>
+                    </Link>
+                  </th>
+                  <th className="px-6 py-4 font-medium text-right">
+                    <Link href={buildSortHref("assets")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                      Assets <span className="text-xs">{sortArrow("assets")}</span>
+                    </Link>
+                  </th>
                   <th className="px-6 py-4 font-medium text-center">Flags</th>
-                  <th className="px-6 py-4 font-medium text-right">Score</th>
+                  <th className="px-6 py-4 font-medium text-right">
+                    <Link href={buildSortHref("score")} className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                      Score <span className="text-xs">{sortArrow("score")}</span>
+                    </Link>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50">
@@ -186,7 +203,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                     <tr key={decl.declaration_id} className="hover:bg-zinc-800/20 transition-colors">
                     <td className="px-6 py-4">
                       <Link
-                        href={`/declaration?id=${decl.declaration_id}`}
+                        href={`/declaration?id=${decl.declaration_id}&returnTo=${encodeURIComponent(currentDashboardHref)}`}
                         className="font-medium text-blue-400 hover:text-blue-300 transition-colors"
                         data-testid={`declaration-link-${decl.declaration_id}`}
                       >

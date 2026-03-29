@@ -6,10 +6,11 @@ export const revalidate = 0;
 export default async function DeclarationByQuery({
   searchParams,
 }: {
-  searchParams: Promise<{ id?: string }>;
+  searchParams: Promise<{ id?: string; returnTo?: string }>;
 }) {
   const resolved = await searchParams;
   const id = resolved.id;
+  const returnTo = resolved.returnTo;
 
   if (!id) {
     return (
@@ -27,5 +28,8 @@ export default async function DeclarationByQuery({
     );
   }
 
-  return DeclarationDetail({ params: Promise.resolve({ id }) });
+  return DeclarationDetail({
+    params: Promise.resolve({ id }),
+    searchParams: Promise.resolve({ returnTo }),
+  });
 }

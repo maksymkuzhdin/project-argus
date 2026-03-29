@@ -193,8 +193,16 @@ function aggregateVehicles(items: Record<string, unknown>[]): AggregatedVehicle[
     return Array.from(groups.values());
 }
 
-export default async function DeclarationDetail({ params }: { params: Promise<{ id: string }> }) {
+export default async function DeclarationDetail({
+    params,
+    searchParams,
+}: {
+    params: Promise<{ id: string }>;
+    searchParams?: Promise<{ returnTo?: string }>;
+}) {
     const resolvedParams = await params;
+    const resolvedSearchParams = searchParams ? await searchParams : {};
+    const backHref = resolvedSearchParams.returnTo || "/";
     let data: DeclarationDetail | null = null;
     let renderError: string | null = null;
 
@@ -237,7 +245,7 @@ export default async function DeclarationDetail({ params }: { params: Promise<{ 
 
                 {/* Navigation */}
                 <nav>
-                    <Link href="/" className="text-sm font-medium text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-2">
+                    <Link href={backHref} className="text-sm font-medium text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-2">
                         &larr; Back to Dashboard
                     </Link>
                 </nav>
