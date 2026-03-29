@@ -141,6 +141,27 @@ def _monetary_row_to_dict(row: MonetaryAsset) -> dict[str, Any]:
     }
 
 
+def _cr6_triggered_from_real_estate(real_estate: list[dict]) -> bool:
+    """Return True if CR6 (excessive real-estate area) would trigger for the given items."""
+    from decimal import InvalidOperation
+    dwelling_area = Decimal(0)
+    agri_area = Decimal(0)
+    for r in real_estate:
+        area = r.get("total_area")
+        if area is None:
+            continue
+        try:
+            area_d = Decimal(str(area))
+        except (ValueError, InvalidOperation):
+            continue
+        obj = str(r.get("object_type") or "").lower()
+        if any(kw in obj for kw in ("кварт", "буд", "жит")):
+            dwelling_area += area_d
+        if "зем" in obj:
+            agri_area += area_d
+    return dwelling_area > Decimal("250") or agri_area > Decimal("100000")
+
+
 def _real_estate_row_to_dict(row: RealEstateAsset) -> dict[str, Any]:
     return {
         "object_type": row.object_type,
@@ -290,11 +311,15 @@ def get_person_timeline(
 
         # Reconstruct full-pipeline dicts from the cache
         fulls = []
+        declaration_re: list[dict] = []
+        latest_year = -1
         for decl_id in decl_ids:
             detail = _CACHE.get(decl_id)
             if not detail:
                 continue
             summary = detail.get("summary", {})
+            decl_year_raw = detail.get("declaration_year")
+            decl_year = decl_year_raw if decl_year_raw is not None else 0
             fulls.append({
                 "declaration_id": decl_id,
                 "user_declarant_id": detail.get("user_declarant_id"),
@@ -309,12 +334,20 @@ def get_person_timeline(
                 "family_members": detail.get("family_members", []),
                 "features": detail.get("features", {}),
             })
+            # Track the most recent declaration's real estate for CR6 check
+            if decl_year > latest_year:
+                latest_year = decl_year
+                declaration_re = detail.get("real_estate", [])
 
         timeline = assemble_timeline(fulls)
         if not timeline:
             raise HTTPException(status_code=404, detail="Could not build timeline.")
 
-        ts = score_timeline(timeline)
+        declaration_triggered_rules: set[str] = set()
+        if _cr6_triggered_from_real_estate(declaration_re):
+            declaration_triggered_rules.add("CR6")
+
+        ts = score_timeline(timeline, declaration_triggered_rules=declaration_triggered_rules)
         return _timeline_response(timeline, ts)
 
     # DB path
@@ -330,5 +363,15 @@ def get_person_timeline(
             detail="Only one year of data found — multi-year timeline requires 2+.",
         )
 
-    ts = score_timeline(timeline)
+    # Check CR6 from the most recent declaration for cross-layer interaction bonus
+    declaration_triggered_rules_db: set[str] = set()
+    if timeline.snapshots:
+        latest_decl_id = timeline.snapshots[-1].declaration_id
+        re_rows = db.query(RealEstateAsset).filter(
+            RealEstateAsset.declaration_id == latest_decl_id
+        ).all()
+        if _cr6_triggered_from_real_estate([_real_estate_row_to_dict(r) for r in re_rows]):
+            declaration_triggered_rules_db.add("CR6")
+
+    ts = score_timeline(timeline, declaration_triggered_rules=declaration_triggered_rules_db)
     return _timeline_response(timeline, ts)

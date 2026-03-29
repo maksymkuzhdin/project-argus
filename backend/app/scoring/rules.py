@@ -1440,14 +1440,62 @@ def score_declaration(
 
     triggered_ids = {r.rule_name for r in flags}
     interaction_bonus = 0.0
+    interaction_flags: list[RuleResult] = []
+
     if "CR1" in triggered_ids and "CR2" in triggered_ids:
         interaction_bonus += 3.0
+        interaction_flags.append(RuleResult(
+            rule_name="IX_CR1_CR2",
+            score=3.0,
+            triggered=True,
+            explanation=(
+                "Interaction bonus: High cash-to-income ratio (CR1) combined with significant "
+                "foreign-currency cash holdings (CR2) amplify the cash-concealment risk signal."
+            ),
+            category="interaction",
+            severity="HIGH",
+            confidence=0.85,
+        ))
+
     if "CR10" in triggered_ids and "CR13" in triggered_ids:
         interaction_bonus += 3.0
+        interaction_flags.append(RuleResult(
+            rule_name="IX_CR10_CR13",
+            score=3.0,
+            triggered=True,
+            explanation=(
+                "Interaction bonus: Unknown-value major assets (CR10) combined with "
+                "family-member opacity markers (CR13) indicate a systemic concealment "
+                "strategy across asset categories."
+            ),
+            category="interaction",
+            severity="HIGH",
+            confidence=0.85,
+        ))
+
+    if "CR11" in triggered_ids and "CR12" in triggered_ids:
+        interaction_bonus += 2.0
+        interaction_flags.append(RuleResult(
+            rule_name="IX_CR11_CR12",
+            score=2.0,
+            triggered=True,
+            explanation=(
+                "Interaction bonus: Proxy ownership via family member with low income (CR11) "
+                "combined with disproportionate family-member asset concentration (CR12) "
+                "indicate coordinated wealth redistribution across household members."
+            ),
+            category="interaction",
+            severity="HIGH",
+            confidence=0.85,
+        ))
 
     raw_total = raw_corruption + 0.5 * raw_opacity + 0.1 * raw_quality_capped + interaction_bonus
     overall_100 = 100.0 * (1.0 - math.exp(-raw_total / 12.0)) if raw_total > 0 else 0.0
     overall_100 = round(overall_100, 2)
+
+    # Append interaction flags after aggregation so their scores are not double-counted
+    # in raw_corruption/raw_opacity but still appear in rule_results for explanations.
+    flags.extend(interaction_flags)
 
     triggered: list[str] = []
     seen_rules: set[str] = set()
@@ -1770,11 +1818,22 @@ class TimelineScoringResult:
         return "\n".join(lines)
 
 
-def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
+def score_timeline(
+    timeline: "PersonTimeline",
+    *,
+    declaration_triggered_rules: set[str] | None = None,
+) -> TimelineScoringResult:
     """Run temporal scoring rules against a PersonTimeline.
 
     Evaluates the worst-case year-over-year change across all consecutive
     pairs and also runs CR5, BR2, and BR4 rules.
+
+    Parameters
+    ----------
+    declaration_triggered_rules:
+        Optional set of rule IDs that were triggered in the most recent
+        declaration-level scoring. When provided, enables cross-layer
+        interaction bonuses (e.g. CR6 + CR15).
 
     Returns a ``TimelineScoringResult`` on a 0–100 scale.
     """
@@ -1797,6 +1856,8 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
     worst_br2 = RuleResult("BR2", 0.0, False, "No changes to assess.")
     worst_br4 = RuleResult("BR4", 0.0, False, "No changes to assess.")
     worst_cr14 = RuleResult("CR14", 0.0, False, "No changes to assess.")
+    # Track whether the worst-case CR14 change also had zero one-off income.
+    cr14_zero_one_off = False
     br1 = _br1_many_corrected(timeline)
     cr15 = _cr15_real_estate_income_3y(timeline)
 
@@ -1834,13 +1895,15 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
         c14 = _cr14_asset_appearance_disappearance(change)
         if c14.score > worst_cr14.score:
             worst_cr14 = c14
+            _one_off = getattr(change, "one_off_income_curr", None)
+            one_off = Decimal(0) if _one_off is None else _one_off
+            cr14_zero_one_off = c14.triggered and (one_off == Decimal(0))
 
     rules = [
         worst_income_rule, worst_asset_rule, worst_cash_rule,
         worst_cr5, worst_br2, worst_br4, worst_cr14,
         br1, cr15,
     ]
-    triggered = [r.rule_name for r in rules if r.triggered]
 
     # Weighted aggregation for timeline (same approach as declaration scorer)
     raw_corruption = sum(
@@ -1851,9 +1914,55 @@ def score_timeline(timeline: "PersonTimeline") -> TimelineScoringResult:
     )
     raw_opacity = sum(r.score for r in rules if getattr(r, "category", None) == "opacity")
 
-    raw_total = raw_corruption + 0.5 * raw_opacity
+    # --- Interaction bonuses ---
+    triggered_ids = {r.rule_name for r in rules if r.triggered}
+    interaction_bonus = 0.0
+    interaction_flags: list[RuleResult] = []
+
+    if "CR14" in triggered_ids and cr14_zero_one_off:
+        interaction_bonus += 2.0
+        interaction_flags.append(RuleResult(
+            rule_name="IX_CR14_NO_INCOME",
+            score=2.0,
+            triggered=True,
+            explanation=(
+                "Interaction bonus: Major asset appearance/disappearance (CR14) with zero "
+                "one-off income — no income source can explain the asset change, "
+                "significantly increasing the suspicion level."
+            ),
+            category="interaction",
+            severity="HIGH",
+            confidence=0.9,
+        ))
+
+    if (
+        "CR15" in triggered_ids
+        and declaration_triggered_rules
+        and "CR6" in declaration_triggered_rules
+    ):
+        interaction_bonus += 2.0
+        interaction_flags.append(RuleResult(
+            rule_name="IX_CR6_CR15",
+            score=2.0,
+            triggered=True,
+            explanation=(
+                "Interaction bonus: Excessive real-estate area (CR6) combined with "
+                "real-estate value far exceeding 3-year average household income (CR15) "
+                "compound the property-based wealth anomaly signal."
+            ),
+            category="interaction",
+            severity="HIGH",
+            confidence=0.85,
+        ))
+
+    raw_total = raw_corruption + 0.5 * raw_opacity + interaction_bonus
     overall_100 = 100.0 * (1.0 - math.exp(-raw_total / 12.0)) if raw_total > 0 else 0.0
     overall_100 = round(overall_100, 2)
+
+    # Append interaction flags after aggregation so their scores are not double-counted
+    # in raw_corruption/raw_opacity but still appear in rule_results for explanations.
+    rules.extend(interaction_flags)
+    triggered = [r.rule_name for r in rules if r.triggered]
 
     return TimelineScoringResult(
         total_score=overall_100,

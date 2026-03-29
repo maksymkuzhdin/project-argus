@@ -48,8 +48,21 @@ Timeline scoring uses a weighted composite and the same bounded 0–100 mapping.
 
 Remaining deferred scope is primarily:
 
-- Interaction bonus combinations not yet wired in scoring (`CR11 + CR12`, `CR14 + no one-off income`, `CR6 + CR15`).
 - CR6 cohort/region-relative thresholds (absolute thresholds are implemented; relative refinement is pending).
+
+## Interaction Bonus Combinations
+
+The following combinations add extra points when both component rules are triggered simultaneously, reflecting compounding risk signals:
+
+| Combination | Bonus | Layer | Description |
+|---|---|---|---|
+| CR1 + CR2 | +3.0 | Declaration | High cash-to-income ratio with significant foreign-currency cash holdings |
+| CR10 + CR13 | +3.0 | Declaration | Unknown-value major assets with family-member opacity markers |
+| CR11 + CR12 | +2.0 | Declaration | Proxy ownership via low-income family member with disproportionate asset concentration |
+| CR14 + zero one-off income | +2.0 | Timeline | Major asset appearance/disappearance with literally zero one-off income |
+| CR6 + CR15 | +2.0 | Cross-layer | Excessive real-estate area combined with real-estate value far exceeding 3-year income |
+
+Each triggered interaction bonus emits a dedicated `RuleResult` (with `rule_name` prefixed `IX_`) that appears in `rule_results`, `triggered_rules`, and `explanation_summary` for full transparency.
 
 ## Explanation Contract
 

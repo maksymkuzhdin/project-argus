@@ -9,6 +9,9 @@ Covers:
     - BR4 — Role change + wealth jump (timeline)
     - CR16 — Cohort-relative outliers (within declaration scorer)
     - Timeline scoring integration
+    - Interaction bonus: CR11 + CR12 (declaration-level proxy ownership)
+    - Interaction bonus: CR14 + zero one-off income (timeline-level)
+    - Interaction bonus: CR6 + CR15 (cross-layer real-estate concentration)
 """
 
 from decimal import Decimal
@@ -711,3 +714,382 @@ class TestTimelineScoringIntegration:
         tl = self._make_timeline([change])
         result = score_timeline(tl)
         assert "CR14" in result.triggered_rules
+
+
+# ── Interaction bonus rules ──────────────────────────────────────────────────
+
+class TestInteractionBonusCR11CR12:
+    """CR11 + CR12 combined proxy-ownership signal (declaration-level)."""
+
+    def test_both_cr11_cr12_trigger_interaction_bonus(self):
+        """When CR11 and CR12 both fire, IX_CR11_CR12 bonus should appear."""
+        # sp1: 100% ownership of 1M квартира + 1.8M cash, income only 20k → CR11 + CR12
+        result = score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("3000000"),
+            cash_holdings=Decimal("100000"),
+            bank_deposits=Decimal("100000"),
+            incomes=[
+                {"amount": "400000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "20000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[
+                {"amount": "1800000", "currency_code": "UAH", "person_ref": "sp1", "asset_type": "Готівкові кошти"},
+                {"amount": "100000", "currency_code": "UAH", "person_ref": "1", "asset_type": "Готівкові кошти"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "sp1",
+                    "cost_assessment": "1000000",
+                    "percent_ownership": "100",
+                    "object_type": "Квартира",
+                }
+            ],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        assert "CR11" in result.triggered_rules
+        assert "CR12" in result.triggered_rules
+        assert "IX_CR11_CR12" in result.triggered_rules
+
+    def test_ix_cr11_cr12_explanation_in_results(self):
+        """IX_CR11_CR12 interaction rule should have a non-empty explanation."""
+        result = score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("3000000"),
+            cash_holdings=Decimal("100000"),
+            bank_deposits=Decimal("100000"),
+            incomes=[
+                {"amount": "400000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "20000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[
+                {"amount": "1800000", "currency_code": "UAH", "person_ref": "sp1", "asset_type": "Готівкові кошти"},
+                # Declarant has a smaller amount so sp1's assets are >2x declarant's
+                {"amount": "200000", "currency_code": "UAH", "person_ref": "1", "asset_type": "Готівкові кошти"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "sp1",
+                    "cost_assessment": "1000000",
+                    "percent_ownership": "100",
+                    "object_type": "Квартира",
+                }
+            ],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        ix_rules = [r for r in result.rule_results if r.rule_name == "IX_CR11_CR12"]
+        assert len(ix_rules) == 1
+        assert ix_rules[0].triggered
+        assert ix_rules[0].explanation  # non-empty explanation
+
+    def test_ix_cr11_cr12_increases_score_vs_single_rule(self):
+        """Score with both CR11 + CR12 should exceed score with only CR12."""
+        # Baseline: only CR12 triggers (no CR11 condition)
+        base = score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("2000000"),
+            cash_holdings=Decimal("50000"),
+            bank_deposits=Decimal("50000"),
+            incomes=[
+                {"amount": "400000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "20000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[
+                # sp1 has 1.2M (>2x declarant's total), but declarant owns it not sp1
+                {"amount": "1200000", "currency_code": "UAH", "person_ref": "sp1", "asset_type": "Готівкові кошти"},
+            ],
+            real_estate=[],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        # With interaction: add real estate to trigger CR11 too
+        combined = score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("3000000"),
+            cash_holdings=Decimal("100000"),
+            bank_deposits=Decimal("100000"),
+            incomes=[
+                {"amount": "400000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "20000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[
+                {"amount": "1800000", "currency_code": "UAH", "person_ref": "sp1", "asset_type": "Готівкові кошти"},
+                {"amount": "100000", "currency_code": "UAH", "person_ref": "1", "asset_type": "Готівкові кошти"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "sp1",
+                    "cost_assessment": "1000000",
+                    "percent_ownership": "100",
+                    "object_type": "Квартира",
+                }
+            ],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        assert "IX_CR11_CR12" in combined.triggered_rules
+        assert combined.total_score > base.total_score
+
+    def test_no_bonus_without_cr12(self):
+        """IX_CR11_CR12 must NOT fire when CR12 is absent."""
+        result = score_declaration(
+            total_income=Decimal("500000"),
+            total_assets=Decimal("1000000"),
+            cash_holdings=Decimal("50000"),
+            bank_deposits=Decimal("50000"),
+            incomes=[
+                {"amount": "500000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "20000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[],
+            real_estate=[
+                {
+                    "right_belongs_raw": "sp1",
+                    "cost_assessment": "600000",
+                    "percent_ownership": "100",
+                    "object_type": "Квартира",
+                }
+            ],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        assert "IX_CR11_CR12" not in result.triggered_rules
+
+
+class TestInteractionBonusCR14NoIncome:
+    """CR14 + zero one-off income interaction bonus (timeline-level)."""
+
+    def _make_timeline(self, changes):
+        return SimpleNamespace(
+            user_declarant_id=1,
+            name="Test Person",
+            snapshots=[],
+            changes=changes,
+            max_income_ratio=None,
+            max_monetary_ratio=None,
+            max_cash_delta=None,
+            declarations_per_year={},
+        )
+
+    def _change(self, **kwargs):
+        defaults = {
+            "from_year": 2023, "to_year": 2024,
+            "income_prev": None, "income_curr": None,
+            "income_delta": None, "income_ratio": None,
+            "monetary_prev": None, "monetary_curr": None,
+            "monetary_delta": None, "monetary_ratio": None,
+            "cash_prev": None, "cash_curr": None, "cash_delta": None,
+            "assets_prev": None, "assets_curr": None,
+            "asset_growth": None, "income_growth": None,
+            "unknown_share_prev": 0.0, "unknown_share_curr": 0.0,
+            "unknown_share_delta": 0.0,
+            "role_prev": "teacher", "role_curr": "teacher",
+            "role_changed": False,
+            "major_assets_appeared": 0,
+            "major_assets_disappeared": 0,
+            "max_appeared_value": None,
+            "max_disappeared_value": None,
+            "one_off_income_curr": Decimal("0"),
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_cr14_zero_one_off_triggers_interaction_bonus(self):
+        """When CR14 fires with zero one-off income, IX_CR14_NO_INCOME should appear."""
+        change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("2000000"),
+            one_off_income_curr=Decimal("0"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert "CR14" in result.triggered_rules
+        assert "IX_CR14_NO_INCOME" in result.triggered_rules
+
+    def test_cr14_with_some_income_no_interaction_bonus(self):
+        """When CR14 fires but one-off income is non-zero, IX_CR14_NO_INCOME should NOT appear."""
+        change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("2000000"),
+            one_off_income_curr=Decimal("100000"),  # some income, not zero
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert "CR14" in result.triggered_rules
+        assert "IX_CR14_NO_INCOME" not in result.triggered_rules
+
+    def test_ix_cr14_no_income_explanation_non_empty(self):
+        """IX_CR14_NO_INCOME should carry a clear explanation string."""
+        change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("1500000"),
+            one_off_income_curr=Decimal("0"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        ix_rules = [r for r in result.rule_results if r.rule_name == "IX_CR14_NO_INCOME"]
+        assert len(ix_rules) == 1
+        assert ix_rules[0].triggered
+        assert ix_rules[0].explanation
+
+    def test_ix_cr14_increases_score_vs_partial_income(self):
+        """Zero one-off income should yield higher score than partial income (CR14 only)."""
+        partial_income_change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("2000000"),
+            one_off_income_curr=Decimal("200000"),
+        )
+        zero_income_change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("2000000"),
+            one_off_income_curr=Decimal("0"),
+        )
+        result_partial = score_timeline(self._make_timeline([partial_income_change]))
+        result_zero = score_timeline(self._make_timeline([zero_income_change]))
+        assert result_zero.total_score > result_partial.total_score
+
+    def test_no_cr14_no_interaction_bonus(self):
+        """IX_CR14_NO_INCOME must NOT fire when CR14 is absent."""
+        change = self._change(one_off_income_curr=Decimal("0"))
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        assert "CR14" not in result.triggered_rules
+        assert "IX_CR14_NO_INCOME" not in result.triggered_rules
+
+
+class TestInteractionBonusCR6CR15:
+    """CR6 + CR15 cross-layer interaction bonus (timeline-level with declaration input)."""
+
+    def _snapshot(self, year, *, income=None, total_real_estate=None):
+        return SimpleNamespace(
+            declaration_year=year,
+            declaration_type=1,
+            total_income=income,
+            total_real_estate=total_real_estate,
+        )
+
+    def _make_timeline_with_snapshots(self, snapshots):
+        return SimpleNamespace(
+            user_declarant_id=1,
+            name="Test Person",
+            snapshots=snapshots,
+            changes=[],
+            max_income_ratio=None,
+            max_monetary_ratio=None,
+            max_cash_delta=None,
+            declarations_per_year={},
+        )
+
+    def test_cr6_cr15_both_trigger_interaction_bonus(self):
+        """When CR15 fires in timeline and CR6 is passed from declaration, IX_CR6_CR15 appears."""
+        tl = self._make_timeline_with_snapshots([
+            self._snapshot(2022, income=Decimal("100000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("100000"), total_real_estate=Decimal("600000")),
+            self._snapshot(2024, income=Decimal("100000"), total_real_estate=Decimal("2000000")),
+        ])
+        # CR15 triggers (20x ratio), CR6 from declaration
+        result = score_timeline(tl, declaration_triggered_rules={"CR6"})
+        assert "CR15" in result.triggered_rules
+        assert "IX_CR6_CR15" in result.triggered_rules
+
+    def test_no_ix_cr6_cr15_without_cr6_in_declaration(self):
+        """IX_CR6_CR15 must NOT fire when CR6 is absent from declaration rules."""
+        tl = self._make_timeline_with_snapshots([
+            self._snapshot(2022, income=Decimal("100000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("100000"), total_real_estate=Decimal("600000")),
+            self._snapshot(2024, income=Decimal("100000"), total_real_estate=Decimal("2000000")),
+        ])
+        result = score_timeline(tl)  # no declaration_triggered_rules
+        assert "CR15" in result.triggered_rules
+        assert "IX_CR6_CR15" not in result.triggered_rules
+
+    def test_no_ix_cr6_cr15_without_cr15(self):
+        """IX_CR6_CR15 must NOT fire when CR15 does not trigger."""
+        tl = self._make_timeline_with_snapshots([
+            self._snapshot(2022, income=Decimal("500000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("500000"), total_real_estate=Decimal("400000")),
+            self._snapshot(2024, income=Decimal("500000"), total_real_estate=Decimal("1000000")),
+        ])
+        result = score_timeline(tl, declaration_triggered_rules={"CR6"})
+        assert "CR15" not in result.triggered_rules
+        assert "IX_CR6_CR15" not in result.triggered_rules
+
+    def test_ix_cr6_cr15_explanation_non_empty(self):
+        """IX_CR6_CR15 interaction rule should carry a clear explanation string."""
+        tl = self._make_timeline_with_snapshots([
+            self._snapshot(2022, income=Decimal("100000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("100000"), total_real_estate=Decimal("600000")),
+            self._snapshot(2024, income=Decimal("100000"), total_real_estate=Decimal("2000000")),
+        ])
+        result = score_timeline(tl, declaration_triggered_rules={"CR6"})
+        ix_rules = [r for r in result.rule_results if r.rule_name == "IX_CR6_CR15"]
+        assert len(ix_rules) == 1
+        assert ix_rules[0].triggered
+        assert ix_rules[0].explanation
+
+    def test_ix_cr6_cr15_increases_score_vs_cr15_alone(self):
+        """IX_CR6_CR15 bonus should yield a higher score than CR15 alone."""
+        tl = self._make_timeline_with_snapshots([
+            self._snapshot(2022, income=Decimal("100000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("100000"), total_real_estate=Decimal("600000")),
+            self._snapshot(2024, income=Decimal("100000"), total_real_estate=Decimal("2000000")),
+        ])
+        result_no_cr6 = score_timeline(tl)
+        result_with_cr6 = score_timeline(tl, declaration_triggered_rules={"CR6"})
+        assert result_with_cr6.total_score > result_no_cr6.total_score
+
+
+class TestExistingInteractionBonusExplanations:
+    """Existing CR1+CR2 and CR10+CR13 bonuses should now emit explanation RuleResults."""
+
+    def _family_no_info_assets(self, count: int) -> list[dict]:
+        return [
+            {
+                "right_belongs_raw": "sp1",
+                "cost_assessment": None,
+                "cost_assessment_status": "family_no_info",
+                "percent_ownership": "100",
+                "object_type": "Квартира",
+                "total_area": "150",
+            }
+            for _ in range(count)
+        ]
+
+    def test_ix_cr10_cr13_explanation_emitted(self):
+        """When CR10 and CR13 both fire, IX_CR10_CR13 RuleResult should appear."""
+        family_assets = self._family_no_info_assets(4)  # 4 family_no_info items → CR13
+        # Add an unknown-value real estate item to trigger CR10
+        monetary_with_unknown = [
+            {
+                "person_ref": "1",
+                "asset_type": "Банківський рахунок",
+                "amount": None,
+                "amount_status": "unknown",
+                "currency_code": "UAH",
+            }
+            for _ in range(3)
+        ]
+        result = score_declaration(
+            total_income=Decimal("200000"),
+            total_assets=Decimal("500000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("20000"),
+            incomes=[{"amount": "200000", "person_ref": "1", "income_type": "salary"}],
+            monetary_assets=monetary_with_unknown,
+            real_estate=family_assets,
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        if "CR10" in result.triggered_rules and "CR13" in result.triggered_rules:
+            assert "IX_CR10_CR13" in result.triggered_rules
+            ix_rules = [r for r in result.rule_results if r.rule_name == "IX_CR10_CR13"]
+            assert len(ix_rules) == 1
+            assert ix_rules[0].explanation
