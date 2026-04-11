@@ -156,7 +156,8 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
     Parameters
     ----------
     cohort_stats:
-        Optional ``CohortStats`` for CR16 cohort-relative outlier checks.
+        Optional ``CohortStats`` for cohort-aware declaration checks
+        (including CR6 relative mode and CR16 outlier checks).
     """
     declaration_id = raw.get("id", "unknown")
 
@@ -264,6 +265,7 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
                     "category": r.category,
                     "severity": r.severity,
                     "confidence": r.confidence,
+                    "metadata": r.metadata,
                 }
                 for r in result.rule_results
             ],

@@ -1,6 +1,19 @@
+import { E2E_FIXTURE_DATA } from "@/lib/e2eFixtureData";
+
 export const API_URL = typeof window === 'undefined'
     ? process.env.INTERNAL_API_URL || 'http://backend:8000'
     : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+export interface RuleDetail {
+    rule_name: string;
+    score: number;
+    triggered: boolean;
+    explanation: string;
+    category?: string | null;
+    severity?: string | null;
+    confidence?: number | null;
+    metadata?: Record<string, unknown> | null;
+}
 
 export interface DeclarationSummary {
     declaration_id: string;
@@ -18,12 +31,7 @@ export interface DeclarationSummary {
     name: string;
     role: string;
     institution: string;
-    rule_details?: {
-        rule_name: string;
-        score: number;
-        triggered: boolean;
-        explanation: string;
-    }[];
+    rule_details?: RuleDetail[];
 }
 
 export interface PaginatedDeclarations {
@@ -120,12 +128,7 @@ export interface PersonTimelineResponse {
         total_score: number;
         triggered_rules: string[];
         explanation: string;
-        rule_details: {
-            rule_name: string;
-            score: number;
-            triggered: boolean;
-            explanation: string;
-        }[];
+        rule_details: RuleDetail[];
     };
 }
 
@@ -133,7 +136,13 @@ export interface PersonTimelineResponse {
 // API methods
 // ------------------------------------------------------------------
 
+const E2E_FIXTURES_ENABLED =
+    process.env.NEXT_PUBLIC_E2E_FIXTURES === "1" || process.env.E2E_FIXTURES === "1";
+
 export async function fetchStats(): Promise<StatsResponse> {
+    if (E2E_FIXTURES_ENABLED) {
+        return E2E_FIXTURE_DATA.stats;
+    }
     const res = await fetch(`${API_URL}/api/declarations/stats`, {
         cache: 'no-store',
     });
@@ -149,6 +158,37 @@ export async function fetchDeclarations(
     sortBy = 'score',
     sortDir = 'desc'
 ): Promise<PaginatedDeclarations> {
+    if (E2E_FIXTURES_ENABLED) {
+        const normalizedQuery = query.trim().toLowerCase();
+        const filtered = E2E_FIXTURE_DATA.declarations.filter((item) => {
+            if (item.score < minScore) return false;
+            if (!normalizedQuery) return true;
+            return item.name.toLowerCase().includes(normalizedQuery) || item.institution.toLowerCase().includes(normalizedQuery);
+        });
+        const sorted = [...filtered].sort((a, b) => {
+            const direction = sortDir === "asc" ? 1 : -1;
+            if (sortBy === "income") {
+                return (Number(a.total_income || 0) - Number(b.total_income || 0)) * direction;
+            }
+            if (sortBy === "assets") {
+                return (Number(a.total_assets || 0) - Number(b.total_assets || 0)) * direction;
+            }
+            if (sortBy === "name") {
+                return a.name.localeCompare(b.name) * direction;
+            }
+            if (sortBy === "year") {
+                return ((a.declaration_year || 0) - (b.declaration_year || 0)) * direction;
+            }
+            return (a.score - b.score) * direction;
+        });
+        const items = sorted.slice(offset, offset + limit);
+        return {
+            items,
+            total: sorted.length,
+            offset,
+            limit,
+        };
+    }
     const params = new URLSearchParams({
         limit: limit.toString(),
         offset: offset.toString(),
@@ -168,6 +208,11 @@ export async function fetchDeclarations(
 }
 
 export async function fetchDeclaration(id: string): Promise<DeclarationDetail> {
+    if (E2E_FIXTURES_ENABLED) {
+        const fixture = E2E_FIXTURE_DATA.declarationDetails[id];
+        if (!fixture) throw new Error(`Failed to fetch declaration ${id}`);
+        return fixture;
+    }
     const res = await fetch(`${API_URL}/api/declarations/${id}`, {
         cache: 'no-store',
     });
@@ -176,6 +221,12 @@ export async function fetchDeclaration(id: string): Promise<DeclarationDetail> {
 }
 
 export async function fetchPersonTimeline(userDeclarantId: number): Promise<PersonTimelineResponse> {
+    if (E2E_FIXTURES_ENABLED) {
+        if (userDeclarantId !== E2E_FIXTURE_DATA.personTimeline.user_declarant_id) {
+            throw new Error(`Failed to fetch person timeline ${userDeclarantId}`);
+        }
+        return E2E_FIXTURE_DATA.personTimeline;
+    }
     const res = await fetch(`${API_URL}/api/persons/${userDeclarantId}`, {
         cache: 'no-store',
     });

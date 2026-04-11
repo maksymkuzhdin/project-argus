@@ -41,15 +41,15 @@ Then combined into a bounded overall score:
 
 - Existing YOY rules: `yoy_income_change`, `yoy_asset_growth`, `foreign_cash_jump`
 - Added timeline checks: `CR5`, `CR14`, `CR15`, `BR1`, `BR2`, `BR4`
+- Interaction bonuses wired in scoring and explanations:
+  - declaration: `CR1 + CR2`, `CR10 + CR13`, `CR11 + CR12`
+  - timeline: `CR14 + no one-off income`, `CR6 + CR15`
 
 Timeline scoring uses a weighted composite and the same bounded 0–100 mapping.
 
 ### Deferred Rules
 
-Remaining deferred scope is primarily:
-
-- Interaction bonus combinations not yet wired in scoring (`CR11 + CR12`, `CR14 + no one-off income`, `CR6 + CR15`).
-- CR6 cohort/region-relative thresholds (absolute thresholds are implemented; relative refinement is pending).
+Remaining deferred scope is primarily ML additions and optional calibration refinements.
 
 ## Explanation Contract
 
@@ -64,6 +64,21 @@ Each triggered rule provides:
 - `confidence` (when available)
 
 This keeps outputs transparent for API consumers and UI rendering.
+
+## CR6 Threshold Mode Selection
+
+CR6 now uses a deterministic two-mode selector:
+
+- **Relative mode (preferred):** uses cohort distributions when available and valid.
+  - Region-relative first (same post_type/year cohort, matching primary region).
+  - Falls back to post/year cohort-wide distribution if region sample is not valid.
+  - Validity checks are explicit: minimum sample size and minimum variation.
+  - Severity mapping: top 10% = MEDIUM, top 5% = HIGH.
+- **Absolute fallback mode:** keeps existing fixed thresholds when relative inputs are missing/sparse/unreliable.
+  - Dwellings: > 250 m2 MEDIUM, > 400 m2 HIGH.
+  - Agricultural land: > 10 ha MEDIUM, > 50 ha HIGH.
+
+CR6 explanations now include the mode used (`relative` or `absolute fallback`) and the source/reason used for threshold selection.
 
 ## Layer 3 (ML)
 

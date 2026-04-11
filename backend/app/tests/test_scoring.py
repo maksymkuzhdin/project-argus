@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.config import settings
+from app.scoring.layer3 import Layer3Result
 from app.scoring.rules import (
     RuleResult,
     acquisition_income_mismatch,
@@ -263,6 +265,40 @@ class TestScoreDeclaration:
         )
         assert "CR12" in result.triggered_rules
 
+    def test_interaction_bonus_cr11_cr12_adds_points_and_explanation(self):
+        result = score_declaration(
+            total_income=Decimal("400000"),
+            total_assets=Decimal("3000000"),
+            cash_holdings=Decimal("100000"),
+            bank_deposits=Decimal("100000"),
+            incomes=[
+                {"amount": "400000", "person_ref": "1", "income_type": "salary"},
+                {"amount": "10000", "person_ref": "sp1", "income_type": "salary"},
+            ],
+            monetary_assets=[
+                {"amount": "1700000", "currency_code": "UAH", "person_ref": "sp1", "asset_type": "Готівкові кошти"},
+                {"amount": "100000", "currency_code": "UAH", "person_ref": "1", "asset_type": "Готівкові кошти"},
+            ],
+            real_estate=[
+                {
+                    "right_belongs_raw": "sp1",
+                    "cost_assessment": "1200000",
+                    "percent_ownership": "100",
+                    "object_type": "Квартира",
+                }
+            ],
+            vehicles=[],
+            family_members=[{"member_id": "sp1", "relation": "дружина"}],
+            declaration_year=2024,
+        )
+        assert "CR11" in result.triggered_rules
+        assert "CR12" in result.triggered_rules
+        ib = [r for r in result.rule_results if r.rule_name == "IB_CR11_CR12"]
+        assert len(ib) == 1
+        assert ib[0].score == 3.0
+        assert ib[0].triggered
+        assert "CR11 + CR12" in ib[0].explanation
+
     def test_tq5_not_applicable_step3_flag(self):
         result = score_declaration(
             total_income=Decimal("250000"),
@@ -283,6 +319,82 @@ class TestScoreDeclaration:
             },
         )
         assert "TQ5" in result.triggered_rules
+
+
+class TestLayer3Integration:
+    def test_layer3_adds_capped_ml_rule(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "layer3_enabled", True)
+        monkeypatch.setattr(settings, "layer3_model_path", "dummy-model.pkl")
+        monkeypatch.setattr(settings, "layer3_trigger_threshold", 0.7)
+        monkeypatch.setattr(settings, "layer3_max_points", 10.0)
+
+        def _fake_infer(*, feature_map, model_path):
+            return Layer3Result(
+                anomaly_score=0.95,
+                confidence=0.92,
+                percentile=0.97,
+                top_deviations=[
+                    {"feature_name": "asset_income_ratio", "deviation": 5.2, "value": 18.0},
+                    {"feature_name": "cash_ratio", "deviation": 3.4, "value": 0.93},
+                ],
+            )
+
+        monkeypatch.setattr("app.scoring.rules.layer3_inference.infer_anomaly", _fake_infer)
+
+        result = score_declaration(
+            total_income=Decimal("120000"),
+            total_assets=Decimal("2200000"),
+            cash_holdings=Decimal("900000"),
+            bank_deposits=Decimal("20000"),
+            total_value_fields=18,
+            unknown_value_fields=3,
+            largest_acquisition_cost=Decimal("350000"),
+            ownership_declarant=2,
+            ownership_family=4,
+            ownership_total=6,
+            incomes=[{"amount": "120000", "person_ref": "1", "income_type": "salary", "amount_status": None}],
+            monetary_assets=[{"amount": "900000", "asset_type": "Готівка", "currency_code": "UAH", "person_ref": "1", "amount_status": None}],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+        )
+
+        assert "ML1" in result.triggered_rules
+        ml1 = [r for r in result.rule_results if r.rule_name == "ML1"][0]
+        assert ml1.score <= 10.0
+        assert ml1.metadata is not None
+        assert ml1.metadata.get("anomaly_score") == 0.95
+
+    def test_layer3_fail_open_when_inference_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "layer3_enabled", True)
+        monkeypatch.setattr(settings, "layer3_model_path", "missing-model.pkl")
+
+        def _fake_infer_none(*, feature_map, model_path):
+            return None
+
+        monkeypatch.setattr("app.scoring.rules.layer3_inference.infer_anomaly", _fake_infer_none)
+
+        result = score_declaration(
+            total_income=Decimal("300000"),
+            total_assets=Decimal("400000"),
+            cash_holdings=Decimal("10000"),
+            bank_deposits=Decimal("150000"),
+            total_value_fields=12,
+            unknown_value_fields=1,
+            largest_acquisition_cost=Decimal("50000"),
+            ownership_declarant=3,
+            ownership_family=1,
+            ownership_total=4,
+            incomes=[{"amount": "300000", "person_ref": "1", "income_type": "salary", "amount_status": None}],
+            monetary_assets=[{"amount": "10000", "asset_type": "Готівка", "currency_code": "UAH", "person_ref": "1", "amount_status": None}],
+            real_estate=[],
+            vehicles=[],
+            family_members=[],
+            declaration_year=2024,
+        )
+
+        assert "ML1" not in result.triggered_rules
 
 
 # ── CR5 — Asset growth vs income growth (timeline rule) ─────────────────
@@ -394,6 +506,76 @@ class TestBR4RoleChangeWealthJump:
     def test_no_asset_data(self):
         r = br4_role_change_wealth_jump(self._change(True, None))
         assert not r.triggered
+
+
+class TestCR6ThresholdMode:
+    def _base_kwargs(self, *, real_estate, cohort_stats):
+        return {
+            "total_income": Decimal("300000"),
+            "total_assets": Decimal("500000"),
+            "cash_holdings": Decimal("20000"),
+            "bank_deposits": Decimal("50000"),
+            "incomes": [{"amount": "300000", "person_ref": "1", "income_type": "salary"}],
+            "monetary_assets": [],
+            "real_estate": real_estate,
+            "vehicles": [],
+            "family_members": [],
+            "declaration_year": 2024,
+            "cohort_stats": cohort_stats,
+        }
+
+    def _cr6_explanations(self, result):
+        return [r.explanation for r in result.rule_results if r.triggered and r.rule_name == "CR6"]
+
+    def test_cr6_missing_cohort_stats_falls_back_to_absolute(self):
+        result = score_declaration(
+            **self._base_kwargs(
+                real_estate=[{"object_type": "Квартира", "total_area": "320", "region": "Kyiv"}],
+                cohort_stats=None,
+            )
+        )
+        msgs = self._cr6_explanations(result)
+        assert msgs
+        assert any("CR6 mode: absolute fallback" in m for m in msgs)
+        assert any("missing cohort stats" in m for m in msgs)
+
+    def test_cr6_sparse_cohort_stats_falls_back_to_absolute(self):
+        sparse = SimpleNamespace(
+            dwelling_areas=[100.0, 120.0, 140.0, 160.0],  # size < 5
+            agri_areas=[],
+            dwelling_areas_by_region={"kyiv": [100.0, 120.0, 140.0, 160.0]},
+            agri_areas_by_region={},
+        )
+        result = score_declaration(
+            **self._base_kwargs(
+                real_estate=[{"object_type": "Квартира", "total_area": "300", "region": "Kyiv"}],
+                cohort_stats=sparse,
+            )
+        )
+        msgs = self._cr6_explanations(result)
+        assert msgs
+        assert any("CR6 mode: absolute fallback" in m for m in msgs)
+        assert any("missing or sparse relative distribution" in m for m in msgs)
+
+    def test_cr6_normal_cohort_stats_uses_relative_mode(self):
+        normal = SimpleNamespace(
+            dwelling_areas=[80.0, 90.0, 110.0, 130.0, 150.0, 170.0, 190.0, 210.0],
+            agri_areas=[],
+            dwelling_areas_by_region={
+                "kyiv": [70.0, 85.0, 95.0, 105.0, 115.0, 125.0, 140.0, 160.0, 180.0, 200.0]
+            },
+            agri_areas_by_region={},
+        )
+        result = score_declaration(
+            **self._base_kwargs(
+                real_estate=[{"object_type": "Квартира", "total_area": "220", "region": "Kyiv"}],
+                cohort_stats=normal,
+            )
+        )
+        msgs = self._cr6_explanations(result)
+        assert msgs
+        assert any("CR6 mode: relative" in m for m in msgs)
+        assert any("source: region cohort 'kyiv'" in m for m in msgs)
 
 
 # ── CR16 — Cohort-relative outliers ─────────────────────────────────────
@@ -591,6 +773,8 @@ class TestTimelineScoringIntegration:
             declaration_type=1,
             total_income=income,
             total_real_estate=total_real_estate,
+            dwelling_area=None,
+            agri_area=None,
         )
 
     def _change(self, **kwargs):
@@ -711,3 +895,32 @@ class TestTimelineScoringIntegration:
         tl = self._make_timeline([change])
         result = score_timeline(tl)
         assert "CR14" in result.triggered_rules
+
+    def test_interaction_bonus_cr14_no_one_off_adds_points(self):
+        change = self._change(
+            major_assets_appeared=1,
+            max_appeared_value=Decimal("1500000"),
+            one_off_income_curr=Decimal("100000"),
+        )
+        tl = self._make_timeline([change])
+        result = score_timeline(tl)
+        ib = [r for r in result.rule_results if r.rule_name == "IB_CR14_NO_ONE_OFF"]
+        assert len(ib) == 1
+        assert ib[0].score == 2.0
+        assert "without matching one-off income" in ib[0].explanation
+
+    def test_interaction_bonus_cr6_cr15_adds_points(self):
+        tl = self._make_timeline([])
+        tl.snapshots = [
+            self._snapshot(2022, income=Decimal("100000"), total_real_estate=Decimal("300000")),
+            self._snapshot(2023, income=Decimal("100000"), total_real_estate=Decimal("600000")),
+            self._snapshot(2024, income=Decimal("100000"), total_real_estate=Decimal("2000000")),
+        ]
+        tl.snapshots[2].dwelling_area = Decimal("450")
+        result = score_timeline(tl)
+        assert "CR6" in result.triggered_rules
+        assert "CR15" in result.triggered_rules
+        ib = [r for r in result.rule_results if r.rule_name == "IB_CR6_CR15"]
+        assert len(ib) == 1
+        assert ib[0].score == 2.0
+        assert "CR6 + CR15" in ib[0].explanation

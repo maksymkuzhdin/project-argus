@@ -46,6 +46,8 @@ def _snap_to_dict(s: YearlySnapshot) -> dict[str, Any]:
         "monetary_count": s.monetary_count,
         "real_estate_count": s.real_estate_count,
         "vehicle_count": s.vehicle_count,
+        "dwelling_area": str(s.dwelling_area) if s.dwelling_area is not None else None,
+        "agri_area": str(s.agri_area) if s.agri_area is not None else None,
         "role": s.role,
         "institution": s.institution,
     }

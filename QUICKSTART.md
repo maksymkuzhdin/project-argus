@@ -107,8 +107,12 @@ You'll see:
 npm run dev        # Start dev server (auto-reload)
 npm run lint       # Check code quality
 npm run build      # Build for production
-npm run e2e        # Run end-to-end tests
+npm run e2e        # Run deterministic end-to-end smoke tests
 ```
+
+Playwright smoke tests use deterministic fixture mode by default (`NEXT_PUBLIC_E2E_FIXTURES=1`)
+so dashboard → declaration → person flow does not depend on current DB contents.
+Set `NEXT_PUBLIC_E2E_FIXTURES=0` to run E2E against live backend data.
 
 ### Backend
 ```bash

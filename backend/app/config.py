@@ -25,5 +25,11 @@ class Settings(BaseSettings):
     # Data storage
     raw_data_dir: str = "data/raw"
 
+    # Layer 3 unsupervised ML (optional)
+    layer3_enabled: bool = False
+    layer3_model_path: str = ""
+    layer3_trigger_threshold: float = 0.72
+    layer3_max_points: float = 10.0
+
 
 settings = Settings()

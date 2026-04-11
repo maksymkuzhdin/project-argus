@@ -1,10 +1,9 @@
-"""
-run_scoring.py — Run the full scoring pipeline on raw declarations.
+"""Run declaration scoring with optional Layer 2 and Layer 3 modes.
 
-Reads raw JSON files, processes each through normalization, feature
-extraction, and scoring, then prints a ranked summary.
-
-Usage: python scripts/run_scoring.py [--data-dir PATH] [--year YEAR] [--top N] [--csv FILE] [--layer2]
+This script supports three execution styles:
+- baseline deterministic scoring,
+- Layer 2 cohort uplift,
+- Layer 3 unsupervised anomaly contribution (or shadow comparison mode).
 """
 
 from __future__ import annotations
@@ -18,12 +17,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
+from app.config import settings
 from app.ingestion.save_raw import iter_raw_declarations, load_declaration
-from app.features.cash import classify_monetary_assets
-from app.normalization.parse_step_1 import parse_step_1
-from app.normalization.parse_step_12 import parse_step_12
-from app.normalization.sanitize import sanitize
-from app.services.pipeline import process_declaration
+from app.scoring.cohorts import CohortKey, build_cohort_distributions
+from app.services.pipeline import process_declaration_full
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -55,7 +52,37 @@ def main() -> None:
         action="store_true",
         help="Enable Layer 2 cohort-based scoring on top of Layer 1.",
     )
+    parser.add_argument(
+        "--layer3",
+        action="store_true",
+        help="Enable Layer 3 unsupervised scoring contribution.",
+    )
+    parser.add_argument(
+        "--layer3-model-path",
+        type=str,
+        default="",
+        help="Path to serialized Layer 3 model artifact (.pkl).",
+    )
+    parser.add_argument(
+        "--shadow-layer3",
+        action="store_true",
+        help="Run baseline and Layer 3 side-by-side without changing primary ranking output.",
+    )
     args = parser.parse_args()
+
+    if args.shadow_layer3 and not args.layer3:
+        logger.warning("--shadow-layer3 requires --layer3; enabling --layer3 automatically.")
+        args.layer3 = True
+
+    original_layer3_enabled = settings.layer3_enabled
+    original_layer3_model_path = settings.layer3_model_path
+
+    settings.layer3_enabled = bool(args.layer3) and not bool(args.shadow_layer3)
+    if args.layer3_model_path:
+        settings.layer3_model_path = args.layer3_model_path
+
+    if args.layer3 and not settings.layer3_model_path:
+        logger.warning("Layer 3 enabled but no model path provided. ML contribution will no-op.")
 
     files = iter_raw_declarations(args.data_dir, year=args.year)
     if not files:
@@ -64,94 +91,111 @@ def main() -> None:
 
     logger.info("Found %d raw declaration files.", len(files))
 
-    # ── Pass 1: Process all declarations (Layer 1) ──────────────────────
-    results: list[dict] = []
+    # Pass 1: Process declarations without cohort context to build distributions.
+    raw_entries: list[tuple[dict, dict[str, object]]] = []
     for f in files:
         try:
             raw = load_declaration(f)
-            summary = process_declaration(raw)
-
-            # Attach bio data for display and cohort grouping
-            clean = sanitize(raw)
-            bio = parse_step_1(clean)
-            monetary = parse_step_12(clean)
-            cash_stats = classify_monetary_assets(monetary)
-            summary["name"] = (
-                f"{bio.get('firstname', '')} {bio.get('lastname', '')}".strip()
-                or "Unknown"
-            )
-            summary["work_post"] = bio.get("work_post", "")
-            summary["work_place"] = bio.get("work_place", "")
-
-            # Cohort grouping fields
-            summary["post_type"] = bio.get("post_type", "")
-            summary["declaration_year"] = bio.get("declaration_year") or raw.get("declaration_year")
-
-            # Cash ratio for cohort stats (if applicable)
-            total_inc = summary.get("total_income")
-            total_ast = summary.get("total_assets")
-            summary["_income_float"] = float(Decimal(total_inc)) if total_inc else None
-            summary["_assets_float"] = float(Decimal(total_ast)) if total_ast else None
-            summary["_cash_ratio"] = cash_stats.cash_ratio
-            summary["_confidential_ratio"] = full.get("features", {}).get("confidential_ratio")
-
-            results.append(summary)
+            full = process_declaration_full(raw)
+            raw_entries.append((raw, full))
         except Exception:
             logger.exception("  Failed to process %s", f.name)
 
-    # ── Pass 2: Layer 2 cohort scoring (optional) ────────────────────────
-    if args.layer2:
-        from app.scoring.cohorts import (
-            build_cohort_distributions,
-            CohortKey,
-            score_declaration_l2,
+    if not raw_entries:
+        logger.warning("No declarations were successfully processed.")
+        settings.layer3_enabled = original_layer3_enabled
+        settings.layer3_model_path = original_layer3_model_path
+        return
+
+    cohort_summaries = []
+    for _, full in raw_entries:
+        features = full.get("features", {})
+        total_income = features.get("total_income")
+        total_assets = features.get("total_assets")
+        cohort_summaries.append(
+            {
+                "post_type": features.get("post_type"),
+                "declaration_year": full.get("declaration_year"),
+                "total_income": float(Decimal(str(total_income))) if total_income else None,
+                "total_assets": float(Decimal(str(total_assets))) if total_assets else None,
+                "cash_ratio": features.get("cash_ratio"),
+                "confidential_ratio": features.get("confidential_ratio"),
+            }
         )
 
-        # Build cohort distributions from all processed summaries
-        cohort_summaries = [
-            {
-                "post_type": r.get("post_type"),
-                "declaration_year": r.get("declaration_year"),
-                "total_income": r["_income_float"],
-                "total_assets": r["_assets_float"],
-                "cash_ratio": r.get("_cash_ratio"),
-                "confidential_ratio": r.get("_confidential_ratio"),
-            }
-            for r in results
-        ]
-        distributions = build_cohort_distributions(cohort_summaries)
+    distributions = build_cohort_distributions(cohort_summaries) if args.layer2 else {}
 
-        # Score each declaration against its cohort
-        l2_hit_count = 0
-        for r in results:
-            pt = r.get("post_type")
-            yr = r.get("declaration_year")
-            if pt and yr:
-                key = CohortKey(post_type=str(pt), year=int(yr))
-                cohort = distributions.get(key)
+    # Pass 2: Final scoring run (with optional Layer2 and Layer3).
+    results: list[dict[str, object]] = []
+    shadow_deltas: list[float] = []
+    shadow_ml_hits = 0
+    for raw, full_first_pass in raw_entries:
+        try:
+            features = full_first_pass.get("features", {})
+            post_type = str(features.get("post_type") or "")
+            year = full_first_pass.get("declaration_year")
+            cohort = None
+            if args.layer2 and post_type and year:
+                cohort = distributions.get(CohortKey(post_type=post_type, year=int(year)))
+
+            # Real score path.
+            full_final = process_declaration_full(raw, cohort_stats=cohort)
+
+            # Shadow run: compute baseline without Layer3 and compare.
+            if args.shadow_layer3:
+                settings.layer3_enabled = False
+                baseline_full = process_declaration_full(raw, cohort_stats=cohort)
+                settings.layer3_enabled = bool(args.layer3)
             else:
-                cohort = None
+                baseline_full = full_final
 
-            l2_results = score_declaration_l2(
-                total_income=r["_income_float"],
-                total_assets=r["_assets_float"],
-                cohort=cohort,
-            )
+            score_data = full_final.get("score", {})
+            baseline_score_data = baseline_full.get("score", {})
+            bio = full_final.get("bio", {})
 
-            # Merge L2 into L1 results
-            l2_triggered = [lr for lr in l2_results if lr.triggered]
-            if l2_triggered:
-                l2_hit_count += 1
-                l2_score = sum(lr.score for lr in l2_triggered)
-                r["score"] = min(100.0, round(r["score"] + l2_score * 3.0, 2))
-                r["triggered_rules"].extend(lr.rule_name for lr in l2_triggered)
-                existing = r.get("explanation", "")
-                l2_lines = "\n".join(f"• {lr.explanation}" for lr in l2_triggered)
-                r["explanation"] = f"{existing}\n{l2_lines}".strip()
+            total_score = float(score_data.get("total_score") or 0.0)
+            baseline_score = float(baseline_score_data.get("total_score") or 0.0)
+            delta = round(total_score - baseline_score, 3)
+            shadow_deltas.append(delta)
 
+            rule_details = score_data.get("rule_details") or []
+            has_ml1 = any((r.get("rule_name") == "ML1" and r.get("triggered")) for r in rule_details if isinstance(r, dict))
+            if has_ml1:
+                shadow_ml_hits += 1
+
+            summary = {
+                "declaration_id": full_final.get("declaration_id"),
+                "name": f"{bio.get('firstname', '')} {bio.get('lastname', '')}".strip() or "Unknown",
+                "work_post": bio.get("work_post", ""),
+                "work_place": bio.get("work_place", ""),
+                "total_income": features.get("total_income"),
+                "total_assets": features.get("total_assets"),
+                "score": total_score,
+                "triggered_rules": score_data.get("triggered_rules") or [],
+                "explanation": score_data.get("explanation") or "",
+                "layer3_delta": delta,
+                "layer3_triggered": has_ml1,
+            }
+            results.append(summary)
+        except Exception:
+            logger.exception("  Failed to finalize scoring for declaration %s", raw.get("id", "unknown"))
+
+    settings.layer3_enabled = original_layer3_enabled
+    settings.layer3_model_path = original_layer3_model_path
+
+    if args.layer2:
+        logger.info("Layer 2: %d cohorts built.", len(distributions))
+    if args.layer3:
+        logger.info("Layer 3: model path = %s", settings.layer3_model_path or "<none>")
+    if args.shadow_layer3 and shadow_deltas:
+        avg_delta = sum(shadow_deltas) / len(shadow_deltas)
+        max_delta = max(shadow_deltas)
         logger.info(
-            "Layer 2: %d cohorts built, %d declarations received L2 flags.",
-            len(distributions), l2_hit_count,
+            "Layer 3 shadow: avg delta %.3f, max delta %.3f, ML1 hits %d/%d.",
+            avg_delta,
+            max_delta,
+            shadow_ml_hits,
+            len(shadow_deltas),
         )
 
     # ── Sort and display ─────────────────────────────────────────────────
@@ -187,7 +231,7 @@ def main() -> None:
         fieldnames = [
             "declaration_id", "name", "work_post", "work_place",
             "total_income", "total_assets", "score",
-            "triggered_rules", "explanation",
+            "triggered_rules", "explanation", "layer3_delta", "layer3_triggered",
         ]
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as fh:
             writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")

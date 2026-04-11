@@ -31,7 +31,7 @@ Rule status summary:
 | CR3 | Implemented | Same-year acquisition-vs-income rule over real-estate + vehicle costs with one-off income mitigation. |
 | CR4 | Implemented | Low-income year with multiple medium/high-value acquisitions. |
 | CR5 | Implemented | Asset growth vs income growth comparison in timeline scorer; triggers on asset_growth ≥ 0.5 with income_growth ≤ 0.1. |
-| CR6 | Partially implemented | Absolute area thresholds implemented (dwelling/agri area); cohort/region-relative logic is deferred. |
+| CR6 | Implemented | Uses cohort/region-relative thresholds when valid distributions exist; safely falls back to absolute dwelling/agri thresholds when cohort data is missing or sparse. |
 | CR7 | Implemented | Luxury vehicles + income and vehicles-per-adult thresholds are implemented. |
 | CR8 | Implemented | Agri-asset without agri/rent income rule implemented using keyword classification. |
 | CR9 | Implemented | Commercial/rentable assets with low rent/business income implemented. |
@@ -48,11 +48,10 @@ Rule status summary:
 | BR4 | Implemented | Role-change detection with post-promotion asset growth analysis in timeline scorer; triggers on role change + asset_growth ≥ 0.5. |
 
 Interaction-bonus status:
-- Implemented: `CR1 + CR2`, `CR10 + CR13`.
-- Deferred: `CR11 + CR12`, `CR14 + no one-off income` (as separate interaction bonus), `CR6 + CR15`.
+- Implemented: `CR1 + CR2`, `CR10 + CR13`, `CR11 + CR12`, `CR14 + no one-off income`, `CR6 + CR15`.
 
 Current reason for deferrals:
-- Remaining deferrals are now mostly interaction-bonus combinations and cohort/region refinements (for CR6), rather than missing core rule wiring.
+- Remaining deferrals are mostly future model and calibration improvements, rather than missing core rule wiring.
 
 ---
 

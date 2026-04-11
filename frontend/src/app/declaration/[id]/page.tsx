@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { fetchDeclaration, type DeclarationDetail } from "@/lib/api";
+import { fetchDeclaration, type DeclarationDetail, type RuleDetail } from "@/lib/api";
 import IncomeAssetsChart from "@/components/IncomeAssetsChart";
 import ScoreBreakdownChart from "@/components/ScoreBreakdownChart";
 import { getScoreBand } from "@/lib/scoreBands";
@@ -74,6 +74,18 @@ function resolveIncomeRecipient(personRef: unknown, familyMembers: Record<string
 
 function resolveAssetOwner(personRef: unknown, familyMembers: Record<string, unknown>[]): string {
     return resolveIncomeRecipient(personRef, familyMembers);
+}
+
+function getMl1Rule(ruleDetails: RuleDetail[] | undefined): RuleDetail | null {
+    if (!Array.isArray(ruleDetails)) return null;
+    const ml = ruleDetails.find((r) => r.rule_name === "ML1" && r.triggered);
+    return ml || null;
+}
+
+function getAnomalyTier(score: number): string {
+    if (score >= 0.9) return "High Outlier";
+    if (score >= 0.8) return "Medium Outlier";
+    return "Low Outlier";
 }
 
 type AggregatedRealEstate = {
@@ -240,6 +252,11 @@ export default async function DeclarationDetail({
     const aggregatedVehicles = aggregateVehicles(vehicleItems);
     const uniquePropertyCount = aggregatedRealEstate.length;
     const rawPropertyRecordCount = realEstateItems.length;
+    const ml1Rule = getMl1Rule(summary.rule_details);
+    const mlMeta = ml1Rule?.metadata as Record<string, unknown> | undefined;
+    const mlAnomalyScore = typeof mlMeta?.anomaly_score === "number" ? mlMeta.anomaly_score : null;
+    const mlPercentile = typeof mlMeta?.anomaly_percentile === "number" ? mlMeta.anomaly_percentile : null;
+    const mlTopDeviations = Array.isArray(mlMeta?.top_deviations) ? mlMeta.top_deviations : [];
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -343,6 +360,51 @@ export default async function DeclarationDetail({
                         )}
                     </div>
                 </section>
+
+                {/* Layer 3 Anomaly Profile */}
+                {ml1Rule && mlAnomalyScore !== null && (
+                    <section data-testid="ml1-section">
+                        <h2 className="text-xl font-semibold text-zinc-100 mb-4">Layer 3 Anomaly Profile</h2>
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="text-xs text-zinc-500 mb-1">Anomaly Index</div>
+                                    <div className="text-2xl font-mono text-amber-300">{mlAnomalyScore.toFixed(2)}</div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="text-xs text-zinc-500 mb-1">Anomaly Tier</div>
+                                    <div className="text-lg text-zinc-100">{getAnomalyTier(mlAnomalyScore)}</div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="text-xs text-zinc-500 mb-1">Peer Percentile</div>
+                                    <div className="text-lg text-zinc-100">{mlPercentile !== null ? `${(mlPercentile * 100).toFixed(0)}%` : "—"}</div>
+                                </div>
+                            </div>
+
+                            {mlTopDeviations.length > 0 && (
+                                <div>
+                                    <div className="text-sm font-medium text-zinc-400 mb-2">Top Feature Deviations</div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {mlTopDeviations.slice(0, 4).map((item, idx) => {
+                                            const row = item as Record<string, unknown>;
+                                            return (
+                                                <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-sm">
+                                                    <div className="text-zinc-200 font-medium">{formatField(row.feature_name)}</div>
+                                                    <div className="text-zinc-500">Value: {formatField(row.value)} • Deviation: {formatField(row.deviation)}</div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="text-xs text-zinc-500 leading-relaxed">
+                                Layer 3 is an unsupervised review-priority signal. It indicates statistical outlier behavior,
+                                not proof of wrongdoing.
+                            </div>
+                        </div>
+                    </section>
+                )}
 
                 {/* Financial Summary */}
                 <section>

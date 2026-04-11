@@ -36,6 +36,8 @@ class YearlySnapshot:
     monetary_count: int
     real_estate_count: int
     vehicle_count: int
+    dwelling_area: Decimal | None
+    agri_area: Decimal | None
 
     # BR2: unknown-value share among high-value assets
     unknown_share: float  # fraction of high-value asset fields with unknown values
@@ -300,6 +302,10 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
     total_assets = total_monetary
     # Add real estate cost assessments if available
     re_total = Decimal(0)
+    dwelling_area = Decimal(0)
+    agri_area = Decimal(0)
+    has_dwelling_area = False
+    has_agri_area = False
     for r in full.get("real_estate", []):
         c = r.get("cost_assessment")
         if c is not None:
@@ -307,6 +313,20 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
                 re_total += Decimal(str(c))
             except Exception:
                 continue
+        area = r.get("total_area")
+        obj = str(r.get("object_type") or "").lower()
+        if area is not None:
+            try:
+                area_d = Decimal(str(area))
+            except Exception:
+                area_d = None
+            if area_d is not None:
+                if any(kw in obj for kw in ("кварт", "буд", "жит")):
+                    dwelling_area += area_d
+                    has_dwelling_area = True
+                if "зем" in obj:
+                    agri_area += area_d
+                    has_agri_area = True
     if re_total > 0:
         total_real_estate = re_total
         total_assets = (total_assets or Decimal(0)) + re_total
@@ -335,6 +355,8 @@ def _snapshot_from_full(full: dict[str, Any]) -> YearlySnapshot:
         monetary_count=len(full.get("monetary", [])),
         real_estate_count=len(full.get("real_estate", [])),
         vehicle_count=len(full.get("vehicles", [])),
+        dwelling_area=dwelling_area if has_dwelling_area else None,
+        agri_area=agri_area if has_agri_area else None,
         unknown_share=unknown_share,
         role=bio.get("work_post", "") or "",
         institution=bio.get("work_place", "") or "",

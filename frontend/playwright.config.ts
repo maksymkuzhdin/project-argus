@@ -58,6 +58,7 @@ export default defineConfig({
     env: {
       INTERNAL_API_URL: process.env.INTERNAL_API_URL || "http://localhost:8000",
       NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+      NEXT_PUBLIC_E2E_FIXTURES: process.env.NEXT_PUBLIC_E2E_FIXTURES || "1",
     },
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

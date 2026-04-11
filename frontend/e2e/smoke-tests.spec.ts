@@ -94,42 +94,33 @@ test.describe("Project Argus E2E Smoke Tests", () => {
 
     await page.goto(`${BASE_URL}/`);
 
-    // Try to find and click a declaration link
-    const declarationLink = page
-      .locator("a[data-testid^='declaration-link-']")
-      .first()
-      .or(page.locator('a[href*="/declaration/"], a[href*="/declaration?id="]').first());
+    const declarationLink = page.locator("a[data-testid^='declaration-link-']").first();
+    await expect(declarationLink).toBeVisible();
+    await declarationLink.click();
 
-    // If no declarations exist, test will gracefully skip detail page
-    if ((await declarationLink.count()) > 0) {
-      const declarationHref = await declarationLink.getAttribute("href");
-      if (declarationHref) {
-        await page.goto(`${BASE_URL}${declarationHref.startsWith("/") ? "" : "/"}${declarationHref}`);
-      } else {
-        await declarationLink.click();
-      }
+    // Wait for detail page to load (URL or deterministic score section)
+    await page.waitForURL(/\/declaration(\/|\?)/, { timeout: 8000 });
 
-      // Wait for detail page to load (URL or deterministic score section)
-      await page.waitForURL(/\/declaration(\/|\?)/, { timeout: 8000 });
+    // Verify detail page structure
+    const pageHeading = page.locator("h1, h2").first();
+    await expect(pageHeading).toBeVisible();
 
-      // Verify detail page structure
-      const pageHeading = page.locator("h1, h2").first();
-      await expect(pageHeading).toBeVisible();
+    // Look for key detail page sections
+    const scoreSection = page.locator("[data-testid='score-section']");
+    const anomalyHeading = page.getByRole("heading", { name: /anomaly analysis/i });
+    const ruleSection = page.locator("[data-testid='rule-section']");
 
-      // Look for key detail page sections
-      const scoreSection = page.locator("[data-testid='score-section']");
-      const anomalyHeading = page.getByRole("heading", { name: /anomaly analysis/i });
-      const ruleSection = page.locator("[data-testid='rule-section']");
+    // At least one of these should exist
+    await expect
+      .poll(async () => {
+        const hasScore = (await scoreSection.count()) > 0;
+        const hasAnomaly = (await anomalyHeading.count()) > 0;
+        const hasRules = (await ruleSection.count()) > 0;
+        return hasScore || hasAnomaly || hasRules;
+      })
+      .toBe(true);
 
-      // At least one of these should exist
-      const hasSectionContent =
-        (await scoreSection.count()) > 0 ||
-        (await anomalyHeading.count()) > 0 ||
-        (await ruleSection.count()) > 0;
-      expect(hasSectionContent).toBe(true);
-
-      // URL and visible content assertions above are the primary E2E checks.
-    }
+    // URL and visible content assertions above are the primary E2E checks.
   });
 
   /**
@@ -159,43 +150,33 @@ test.describe("Project Argus E2E Smoke Tests", () => {
 
     await page.goto(`${BASE_URL}/`);
 
-    // Try to find person link (either from dashboard or declaration detail)
-    let personLink = page.locator('a[href*="/person/"]').first();
+    // Ensure we enter declaration first, then person path (deterministic core journey)
+    const declarationLink = page.locator("a[data-testid^='declaration-link-']").first();
+    await expect(declarationLink).toBeVisible();
+    await declarationLink.click();
+    await page.waitForURL(/\/declaration(\/|\?)/, { timeout: 5000 });
 
-    if ((await personLink.count()) === 0) {
-      // Try to navigate through declaration first
-      const declarationLink = page.locator(
-        'a[href*="/declaration/"], a[href*="/declaration?id="], button:has-text("View")'
-      ).first();
+    const personLink = page.locator('a[href*="/person/"]').first();
+    await expect(personLink).toBeVisible();
+    await personLink.click();
+    await page.waitForURL(/\/person\//, { timeout: 5000 });
 
-      if ((await declarationLink.count()) > 0) {
-        await declarationLink.click();
-        await page.waitForURL(/\/declaration(\/|\?)/, { timeout: 5000 });
+    // Verify timeline page structure
+    const pageHeading = page.locator("h1, h2").first();
+    await expect(pageHeading).toBeVisible();
 
-        // Now look for person link from detail page
-        personLink = page.locator('a[href*="/person/"]').first();
-      }
-    }
+    // Look for timeline elements (years, changes, deltas)
+    const timelineTextMatches = page.getByText(/year|change|delta|history|2023|2024/i);
+    const timelineTestIdMatches = page.locator("[data-testid*='timeline']");
+    await expect
+      .poll(async () => {
+        const hasTimelineText = (await timelineTextMatches.count()) > 0;
+        const hasTimelineTestId = (await timelineTestIdMatches.count()) > 0;
+        return hasTimelineText || hasTimelineTestId;
+      })
+      .toBe(true);
 
-    // If person link found, navigate and verify timeline
-    if ((await personLink.count()) > 0) {
-      await personLink.click();
-      await page.waitForURL(/\/person\//, { timeout: 5000 });
-
-      // Verify timeline page structure
-      const pageHeading = page.locator("h1, h2").first();
-      await expect(pageHeading).toBeVisible();
-
-      // Look for timeline elements (years, changes, deltas)
-      const timelineTextMatches = page.getByText(/year|change|delta|history|2023|2024/i);
-      const timelineTestIdMatches = page.locator("[data-testid*='timeline']");
-      const hasTimelineContent =
-        (await timelineTextMatches.count()) > 0 ||
-        (await timelineTestIdMatches.count()) > 0;
-      expect(hasTimelineContent).toBe(true);
-
-      // URL and timeline content assertions above are the primary E2E checks.
-    }
+    // URL and timeline content assertions above are the primary E2E checks.
   });
 
   /**

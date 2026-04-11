@@ -61,6 +61,7 @@ const RULE_META: Record<string, RuleMeta> = {
   CR11: { title: "Proxy Ownership Pattern", logic: "Flags major assets owned by spouse/child with low independent income." },
   CR13: { title: "Repeated Family No-Info Markers", logic: "Flags repeated key-field omissions attributed to family non-disclosure." },
   CR16: { title: "Cohort Outlier", logic: "Flags declarations that are statistical outliers versus similar peers." },
+  ML1: { title: "Layer 3 Unsupervised Outlier", logic: "Adds a capped score when unsupervised model features indicate strong outlier behavior." },
 
   BR2: { title: "Growing Unknown-Value Share", logic: "Flags increasing proportion of unknown/confidential values across years." },
   BR4: { title: "Post-Role-Change Asset Surge", logic: "Flags sharp asset growth after role changes/promotion periods." },

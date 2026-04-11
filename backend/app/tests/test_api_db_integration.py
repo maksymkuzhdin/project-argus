@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -24,6 +25,8 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.main import app
+
+pytestmark = pytest.mark.db_integration
 
 
 def _seed_declarations(db_session) -> None:

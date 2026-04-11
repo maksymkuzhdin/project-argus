@@ -1,34 +1,28 @@
 """
-Tests for app.api.declarations
-
-These tests require the FastAPI app to import successfully, which in turn
-needs the SQLAlchemy engine (session.py) to connect to Postgres.  If Postgres
-is unavailable the entire module is skipped gracefully so the rest of the
-test suite can still run.
+API contract tests for in-memory fallback endpoints.
 """
+
+from __future__ import annotations
 
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
-try:
-    from fastapi.testclient import TestClient
-    from app.main import app
-    from app.api import declarations
-    from app.db.session import get_db
+from app.api import declarations
+from app.db.session import get_db
+from app.main import app
 
-    # Override the DB dependency for tests to avoid real queries
+
+@pytest.fixture
+def client():
     def _mock_get_db():
         yield None
 
     app.dependency_overrides[get_db] = _mock_get_db
-    client = TestClient(app)
-except Exception as _import_err:
-    pytestmark = pytest.mark.skip(
-        reason=f"Cannot import API layer (Postgres unavailable?): {_import_err}"
-    )
-    client = None  # type: ignore[assignment]
-    declarations = None  # type: ignore[assignment]
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 # A clean state for testing
 MOCK_SUMMARY = [
@@ -70,13 +64,13 @@ def mock_db_has_data():
         yield
 
 
-def test_health_check():
+def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_list_declarations():
+def test_list_declarations(client):
     response = client.get("/api/declarations")
     assert response.status_code == 200
     data = response.json()
@@ -84,14 +78,14 @@ def test_list_declarations():
     assert len(data["items"]) == 3
 
 
-def test_list_declarations_min_score():
+def test_list_declarations_min_score(client):
     response = client.get("/api/declarations?min_score=0.1")
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 2  # Only test-1 and test-2
 
 
-def test_get_stats():
+def test_get_stats(client):
     response = client.get("/api/declarations/stats")
     assert response.status_code == 200
     data = response.json()
@@ -104,13 +98,13 @@ def test_get_stats():
     }
 
 
-def test_get_declaration_exists():
+def test_get_declaration_exists(client):
     response = client.get("/api/declarations/test-1")
     assert response.status_code == 200
     assert response.json()["id"] == "test-1"
 
 
-def test_get_declaration_not_found():
+def test_get_declaration_not_found(client):
     response = client.get("/api/declarations/fake-id")
     assert response.status_code == 404
     payload = response.json()
@@ -118,7 +112,7 @@ def test_get_declaration_not_found():
     assert payload["error"]["message"] == "Declaration not found"
 
 
-def test_list_declarations_limit_validation_error():
+def test_list_declarations_limit_validation_error(client):
     response = client.get("/api/declarations?limit=9999")
     assert response.status_code == 422
     payload = response.json()
@@ -126,14 +120,14 @@ def test_list_declarations_limit_validation_error():
     assert payload["error"]["path"] == "/api/declarations"
 
 
-def test_list_declarations_min_score_validation_error():
+def test_list_declarations_min_score_validation_error(client):
     response = client.get("/api/declarations?min_score=101.0")
     assert response.status_code == 422
     payload = response.json()
     assert payload["error"]["code"] == "validation_error"
 
 
-def test_list_declarations_offset_pagination():
+def test_list_declarations_offset_pagination(client):
     response = client.get("/api/declarations?limit=1&offset=1")
     assert response.status_code == 200
     data = response.json()
@@ -142,7 +136,7 @@ def test_list_declarations_offset_pagination():
     assert len(data["items"]) == 1
 
 
-def test_person_timeline_path_validation_error():
+def test_person_timeline_path_validation_error(client):
     response = client.get("/api/persons/0")
     assert response.status_code == 422
     payload = response.json()

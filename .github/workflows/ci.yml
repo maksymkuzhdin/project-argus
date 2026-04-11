@@ -28,7 +28,12 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run backend tests
-        run: pytest app/tests -q
+        run: pytest app/tests -q -m "not db_integration"
+
+      - name: Run backend DB integration tests
+        env:
+          ARGUS_REQUIRE_DB_TESTS: "1"
+        run: pytest app/tests -q -m "db_integration"
 
   frontend-quality:
     runs-on: ubuntu-latest
@@ -108,6 +113,7 @@ jobs:
           INTERNAL_API_URL: http://localhost:8000
           PLAYWRIGHT_TEST_BASE_URL: http://localhost:3000
           NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_E2E_FIXTURES: "1"
         run: npm run e2e
 
       - name: Upload Playwright report

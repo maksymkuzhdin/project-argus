@@ -187,6 +187,26 @@ def _ensure_loaded() -> None:
             features = full.get("features", {})
             inc = features.get("total_income")
             ast = features.get("total_assets")
+            real_estate_rows = full.get("real_estate", [])
+            dwelling_area_m2 = 0.0
+            agri_area_m2 = 0.0
+            region_area_totals: dict[str, float] = {}
+
+            for row in real_estate_rows:
+                area = row.get("total_area")
+                if area is None:
+                    continue
+                area_f = float(area)
+                obj = str(row.get("object_type") or "").lower()
+                if any(kw in obj for kw in ("кварт", "буд", "жит")):
+                    dwelling_area_m2 += area_f
+                if "зем" in obj:
+                    agri_area_m2 += area_f
+                region_raw = str(row.get("region") or "").strip().lower()
+                if region_raw:
+                    region_area_totals[region_raw] = region_area_totals.get(region_raw, 0.0) + area_f
+
+            primary_region = max(region_area_totals, key=region_area_totals.get) if region_area_totals else None
             cohort_summaries.append({
                 "post_type": features.get("post_type", ""),
                 "declaration_year": full.get("declaration_year"),
@@ -194,6 +214,9 @@ def _ensure_loaded() -> None:
                 "total_assets": float(ast) if ast else None,
                 "cash_ratio": features.get("cash_ratio"),
                 "confidential_ratio": features.get("confidential_ratio"),
+                "dwelling_area_m2": dwelling_area_m2,
+                "agri_area_m2": agri_area_m2,
+                "primary_region": primary_region,
             })
         distributions = build_cohort_distributions(cohort_summaries)
 

@@ -174,13 +174,22 @@ Includes unit tests for cash classification, income parsing, ML scoring, API end
 cd frontend
 npm run lint   # ESLint + TypeScript strict mode
 npm run build  # Production build validation
-npm run e2e    # Playwright end-to-end smoke tests (requires running backend)
+npm run e2e    # Playwright end-to-end smoke tests (deterministic fixture mode by default)
 ```
 
 E2E smoke tests exercise three key user journeys:
 1. **Dashboard**: Load declarations list, search, pagination
 2. **Declaration Detail**: View scores, rules, anomalies
 3. **Person Timeline**: Multi-year changes and deltas
+
+Deterministic smoke mode uses frontend-side fixture data for these API calls:
+`/api/declarations/stats`, `/api/declarations`, `/api/declarations/:id`, `/api/persons/:id`.
+Enable/disable with:
+
+```bash
+NEXT_PUBLIC_E2E_FIXTURES=1 npm run e2e   # deterministic (recommended for CI/local smoke)
+NEXT_PUBLIC_E2E_FIXTURES=0 npm run e2e   # live backend data path
+```
 
 Tests are run automatically in CI (see `.github/workflows/ci.yml`) after backend tests pass.
 

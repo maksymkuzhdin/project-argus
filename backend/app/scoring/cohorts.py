@@ -38,6 +38,10 @@ class CohortStats:
     assets: list[float] = field(default_factory=list)
     cash_ratios: list[float] = field(default_factory=list)
     confidential_ratios: list[float] = field(default_factory=list)
+    dwelling_areas: list[float] = field(default_factory=list)
+    agri_areas: list[float] = field(default_factory=list)
+    dwelling_areas_by_region: dict[str, list[float]] = field(default_factory=dict)
+    agri_areas_by_region: dict[str, list[float]] = field(default_factory=dict)
 
     @property
     def size(self) -> int:
@@ -49,6 +53,12 @@ class CohortStats:
         self.assets.sort()
         self.cash_ratios.sort()
         self.confidential_ratios.sort()
+        self.dwelling_areas.sort()
+        self.agri_areas.sort()
+        for distribution in self.dwelling_areas_by_region.values():
+            distribution.sort()
+        for distribution in self.agri_areas_by_region.values():
+            distribution.sort()
 
 
 @dataclass
@@ -115,6 +125,27 @@ def build_cohort_distributions(
         conf = s.get("confidential_ratio")
         if conf is not None:
             stats.confidential_ratios.append(float(conf))
+
+        dwelling_area = s.get("dwelling_area_m2")
+        if dwelling_area is not None:
+            dwelling_f = float(dwelling_area)
+            stats.dwelling_areas.append(dwelling_f)
+        else:
+            dwelling_f = None
+
+        agri_area = s.get("agri_area_m2")
+        if agri_area is not None:
+            agri_f = float(agri_area)
+            stats.agri_areas.append(agri_f)
+        else:
+            agri_f = None
+
+        region = str(s.get("primary_region") or "").strip().lower()
+        if region:
+            if dwelling_f is not None:
+                stats.dwelling_areas_by_region.setdefault(region, []).append(dwelling_f)
+            if agri_f is not None:
+                stats.agri_areas_by_region.setdefault(region, []).append(agri_f)
 
     # Freeze (sort) and filter small cohorts
     result = {}
