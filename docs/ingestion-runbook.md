@@ -69,8 +69,12 @@ Key fields:
 
 ## Post-Campaign Actions
 1. Archive state file to `data/state_archive/` with timestamp.
-2. Run persistence refresh cycle:
+2. Run persistence refresh cycle (normalization):
    - `python scripts/run_refresh_cycle.py --year 2024 --skip-ingestion --csv output/scores_2024_refresh.csv`
-3. Verify API health:
+3. Backfill EDRPOU codes from raw JSON:
+   - `python scripts/backfill_edrpou_extraction.py --batch-size 500`
+4. Run Prozorro enrichment on new codes (requires ENABLE_PROZORRO_ENRICHMENT=true if used in pipeline, or just run the script):
+   - `python scripts/run_prozorro_enrichment.py --declarations-limit 1000`
+5. Verify API health:
    - `curl http://localhost:8000/health`
-4. Spot-check dashboard and person timeline pages.
+6. Spot-check dashboard and person timeline pages for Prozorro CR17-CR19 flags.

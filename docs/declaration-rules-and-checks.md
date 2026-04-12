@@ -42,6 +42,9 @@ Rule status summary:
 | CR14 | Implemented | Timeline-based major-asset appearance/disappearance checks are implemented with one-off-income mitigation. |
 | CR15 | Implemented | 3-year real-estate value vs average income ratio is implemented in timeline scoring. |
 | CR16 | Implemented | Cohort-relative outlier checks (income/wealth/cash) integrated directly into declaration-level scorer via optional cohort_stats parameter. |
+| CR17 | Implemented | Employer is a public procurement supplier in Prozorro. |
+| CR18 | Implemented | Income source is a public procurement supplier in Prozorro. |
+| CR19 | Implemented | Conflict of Interest: Employer awards contracts to an income source. |
 | BR1 | Implemented | Repeated declarations per reporting year are tracked in timeline assembly and scored as correction-pattern proxy. |
 | BR2 | Implemented | Growth in share of unknown values over time computed in timeline layer; triggers on delta ≥ 0.3 with current share ≥ 0.5. |
 | BR3 | Implemented | Cohort-relative confidential-marker density (>2× cohort median) is implemented in declaration scoring. |
@@ -312,6 +315,24 @@ For each job category × region × year cohort:
   - Cash_Y in top 1% → **HIGH** if also high FX share.
 
 These percentile‑based rules should eventually replace some absolute thresholds.
+
+### CR17 – Employer is a public procurement supplier
+
+- **Condition:** Declarant's employer EDRPOU code (step 1) matches a known supplier in the Prozorro public procurement database with at least 1 contract.
+- **Severity:** MEDIUM (Confidence scales with number of contracts).
+- **Justification:** While possible for large state enterprises, a public official's employer being a frequent commercial supplier warrants review.
+
+### CR18 – Income source is a public procurement supplier
+
+- **Condition:** An entity from which the declarant or family receives income (step 11) matches a known supplier in the Prozorro database.
+- **Severity:** HIGH.
+- **Justification:** The declarant receives income from a government contractor, creating a direct risk of conflict of interest if the declarant has influence over procurement.
+
+### CR19 – Direct Conflict of Interest: Employer awards contracts to income source
+
+- **Condition:** The declarant's employer EDRPOU is listed as the `procuringEntity` on contracts awarded to an entity that pays income to the declarant or their family.
+- **Severity:** HIGH (with high base weight).
+- **Justification:** This is a “smoking gun” signal for a severe conflict of interest, directly linking the official's workplace to their private income sources via public funds.
 
 ---
 

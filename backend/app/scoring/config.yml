@@ -139,6 +139,15 @@ layer1:
       base_weight: 5.0
       confidence: 1.0
 
+    cr17_employer_is_procurement_supplier:
+      base_weight: 3.0
+
+    cr18_income_source_is_procurement_supplier:
+      base_weight: 7.0
+
+    cr19_employer_contracts_with_income_source:
+      base_weight: 10.0
+
   timeline:
     yoy_income_change:
       growth_threshold: 3.0

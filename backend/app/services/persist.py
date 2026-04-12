@@ -89,6 +89,11 @@ def persist_declaration(db: Session, full: dict[str, Any]) -> None:
         work_place=_as_db_string(bio.get("work_place")),
         post_type=_as_db_string(bio.get("post_type")),
         post_category=_as_db_string(bio.get("post_category")),
+        employer_edrpou=full.get("edrpou", {}).get("employer_edrpou"),
+        income_source_edrpous=full.get("edrpou", {}).get("income_source_edrpous"),
+        securities_edrpous=full.get("edrpou", {}).get("securities_edrpous"),
+        bank_edrpous=full.get("edrpou", {}).get("bank_edrpous"),
+        edrpou_extracted_at=full.get("edrpou", {}).get("edrpou_extracted_at"),
     ))
 
     # -- FamilyMembers (step_2) --------------------------------------------

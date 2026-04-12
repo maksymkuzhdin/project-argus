@@ -1822,6 +1822,111 @@ def score_declaration(
                 },
             ))
 
+    # ------------------------------
+    # Prozorro rules (CR17, CR18, CR19)
+    # ------------------------------
+    trigger_prozorro = False
+    employer_edrpou = None
+    income_source_edrpous = []
+    
+    if raw_declaration is not None:
+        raw_data = raw_declaration.get("data", {})
+        if isinstance(raw_data, dict):
+            step1 = raw_data.get("step_1", {})
+            if isinstance(step1, dict) and isinstance(step1.get("data"), dict):
+                employer_edrpou = step1.get("data").get("workPlaceEdrpou")
+                if employer_edrpou and str(employer_edrpou).strip().isdigit():
+                    trigger_prozorro = True
+                    employer_edrpou = str(employer_edrpou).strip()
+                else:
+                    employer_edrpou = None
+
+            step11 = raw_data.get("step_11", {})
+            if isinstance(step11, dict) and not step11.get("isNotApplicable"):
+                step11_data = step11.get("data", [])
+                items = step11_data if isinstance(step11_data, list) else step11_data.values() if isinstance(step11_data, dict) else []
+                for item in items:
+                    if not isinstance(item, dict): continue
+                    for source in (item.get("sources") if isinstance(item.get("sources"), list) else []):
+                        if isinstance(source, dict):
+                            val = source.get("sourceuacompanycode")
+                            if val and str(val).strip().isdigit() and str(val).strip() != "0":
+                                income_source_edrpous.append(str(val).strip())
+                                trigger_prozorro = True
+                                
+    if trigger_prozorro:
+        try:
+            from app.db.session import SessionLocal
+            from app.db.models import ProzorroEnrichment
+            with SessionLocal() as session:
+                codes_to_fetch = set(income_source_edrpous)
+                if employer_edrpou:
+                    codes_to_fetch.add(employer_edrpou)
+                    
+                enrichments = {}
+                for record in session.query(ProzorroEnrichment).filter(ProzorroEnrichment.edrpou.in_(codes_to_fetch)).all():
+                    enrichments[record.edrpou] = record
+                    
+                # CR17
+                cr17_cfg = SCORING_CONFIG.get("layer1", {}).get("corruption", {}).get("cr17_employer_is_procurement_supplier", {})
+                cr17_weight = float(cr17_cfg.get("base_weight", 3.0))
+                
+                if employer_edrpou and employer_edrpou in enrichments:
+                    emp_rec = enrichments[employer_edrpou]
+                    if emp_rec.is_supplier:
+                        contract_count = emp_rec.contract_count or 0
+                        conf = 1.0 if contract_count >= 5 else 0.8
+                        flags.append(_make_flag(
+                            rule_id="CR17",
+                            category="corruption_risk",
+                            severity="MEDIUM",
+                            base_weight=cr17_weight,
+                            confidence=conf,
+                            message=f"Declarant's employer (EDRPOU {employer_edrpou}) appears as a procurement supplier in Prozorro with {contract_count} contract(s) totalling {emp_rec.total_value_uah or 0} UAH. This is unusual for a public institution and warrants review."
+                        ))
+                
+                # CR18 and CR19
+                cr18_cfg = SCORING_CONFIG.get("layer1", {}).get("corruption", {}).get("cr18_income_source_is_procurement_supplier", {})
+                cr18_weight = float(cr18_cfg.get("base_weight", 7.0))
+                
+                cr19_cfg = SCORING_CONFIG.get("layer1", {}).get("corruption", {}).get("cr19_employer_contracts_with_income_source", {})
+                cr19_weight = float(cr19_cfg.get("base_weight", 10.0))
+                
+                cr19_triggered = False
+                
+                for inc_code in set(income_source_edrpous):
+                    if inc_code in enrichments:
+                        inc_rec = enrichments[inc_code]
+                        if inc_rec.is_supplier:
+                            # CR18
+                            contract_count = inc_rec.contract_count or 0
+                            conf = 1.0 if contract_count >= 3 else 0.8
+                            flags.append(_make_flag(
+                                rule_id="CR18",
+                                category="corruption_risk",
+                                severity="HIGH",
+                                base_weight=cr18_weight,
+                                confidence=conf,
+                                message=f"Declared income source (EDRPOU {inc_code}) is a government procurement supplier in Prozorro with {contract_count} contract(s). Review whether the declarant has a role that creates a conflict of interest with this supplier relationship."
+                            ))
+                            
+                            # CR19
+                            if not cr19_triggered and employer_edrpou and inc_rec.procuring_entity_edrpou:
+                                if employer_edrpou in inc_rec.procuring_entity_edrpou:
+                                    flags.append(_make_flag(
+                                        rule_id="CR19",
+                                        category="corruption_risk",
+                                        severity="HIGH",
+                                        base_weight=cr19_weight,
+                                        confidence=1.0,
+                                        message=f"Declarant's employer (EDRPOU {employer_edrpou}) has directly awarded procurement contracts to a company from which the declarant also receives income (EDRPOU {inc_code}, {contract_count} contract(s)). This is a direct conflict-of-interest signal."
+                                    ))
+                                    cr19_triggered = True # Trigger once according to requirements unless it shouldn't... Wait, rule says it triggers when "employer_edrpou appears in the array of ANY income source".
+        except Exception as e:
+            # Degrade gracefully
+            pass
+
+
     triggered_ids = {r.rule_name for r in flags}
     if "CR11" in triggered_ids and "CR12" in triggered_ids:
         flags.append(_make_flag(

@@ -4,6 +4,8 @@ Project Argus — SQLAlchemy ORM models.
 
 from sqlalchemy import Integer, Numeric, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+import sqlalchemy as sa
+import datetime
 
 
 class Base(DeclarativeBase):
@@ -154,6 +156,11 @@ class DeclarantProfile(Base):
     work_place: Mapped[str | None] = mapped_column(String, nullable=True)
     post_type: Mapped[str | None] = mapped_column(String, nullable=True)
     post_category: Mapped[str | None] = mapped_column(String, nullable=True)
+    employer_edrpou: Mapped[str | None] = mapped_column(String, nullable=True)
+    income_source_edrpous: Mapped[list[str] | None] = mapped_column(sa.ARRAY(sa.Text()), nullable=True)
+    securities_edrpous: Mapped[list[str] | None] = mapped_column(sa.ARRAY(sa.Text()), nullable=True)
+    bank_edrpous: Mapped[list[str] | None] = mapped_column(sa.ARRAY(sa.Text()), nullable=True)
+    edrpou_extracted_at: Mapped[datetime.datetime | None] = mapped_column(sa.TIMESTAMP, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -171,4 +178,18 @@ class BankAccount(Base):
     raw_iteration: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+# ---------------------------------------------------------------------------
+# Prozorro Enrichment Database Model
+# ---------------------------------------------------------------------------
 
+class ProzorroEnrichment(Base):
+    __tablename__ = "prozorro_enrichment"
+
+    edrpou: Mapped[str] = mapped_column(String(8), primary_key=True)
+    is_supplier: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
+    contract_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_value_uah: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    most_recent_contract_date: Mapped[datetime.date | None] = mapped_column(sa.Date, nullable=True)
+    procuring_entity_edrpou: Mapped[list[str] | None] = mapped_column(sa.ARRAY(sa.Text()), nullable=True)
+    enriched_at: Mapped[datetime.datetime | None] = mapped_column(sa.TIMESTAMP, nullable=True)
+    enrichment_error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)

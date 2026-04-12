@@ -228,6 +228,13 @@ def process_declaration_full(
         logger.warning(f"Failed to normalize cohort taxonomy for {declaration_id}: {e}")
         cohort_taxonomy = None
 
+    # 2c. Extraction of EDRPOU codes
+    from app.normalization.edrpou_extractor import extract_edrpous
+    from datetime import datetime, timezone
+    
+    edrpou_data = extract_edrpous(raw)
+    edrpou_data["edrpou_extracted_at"] = datetime.now(timezone.utc)
+
     # 3. Features
     total_income = compute_total_income(incomes)
     total_assets = compute_total_assets(real_estate, monetary)
@@ -301,6 +308,7 @@ def process_declaration_full(
             "sector": cohort_taxonomy.sector if cohort_taxonomy else None,
             "government_level": cohort_taxonomy.government_level if cohort_taxonomy else None,
         } if cohort_taxonomy else None,
+        "edrpou": edrpou_data,
         "features": {
             "total_income": str(total_income) if total_income else None,
             "total_assets": str(total_assets) if total_assets else None,
