@@ -148,7 +148,16 @@ def process_declaration(raw: dict) -> dict:
 
 
 
-def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -> dict[str, Any]:
+def process_declaration_full(
+    raw: dict,
+    *,
+    cohort_stats: object | None = None,
+    cohort_resolver: object | None = None,
+    declaration_sector: str | None = None,
+    declaration_gov_level: str | None = None,
+    declaration_region: str | None = None,
+    cohort_key_used: str | None = None,
+) -> dict[str, Any]:
     """Process a declaration and return all parsed sections + features + scores.
 
     Unlike ``process_declaration`` (summary only), this returns the full
@@ -159,6 +168,8 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
     cohort_stats:
         Optional ``CohortStats`` for cohort-aware declaration checks
         (including CR6 relative mode and CR16 outlier checks).
+    cohort_resolver, declaration_sector, declaration_gov_level, declaration_region, cohort_key_used:
+        Optional taxonomy-aware cohort context forwarded to the scoring layer.
     """
     declaration_id = raw.get("id", "unknown")
 
@@ -255,6 +266,11 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
         declaration_year=declaration_year,
         raw_declaration=raw,
         cohort_stats=cohort_stats,
+        cohort_resolver=cohort_resolver,
+        declaration_sector=declaration_sector,
+        declaration_gov_level=declaration_gov_level,
+        declaration_region=declaration_region,
+        cohort_key_used=cohort_key_used,
     )
 
     return {

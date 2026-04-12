@@ -210,7 +210,7 @@ def cohort_income_outlier(
     """
     rule = "cohort_income_outlier"
 
-    if total_income is None or cohort is None or len(cohort.incomes) < 5:
+    if total_income is None or cohort is None or len(getattr(cohort, "incomes", [])) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     income = float(total_income)
@@ -243,7 +243,7 @@ def cohort_wealth_outlier(
     """Flag declarants whose total assets are far above their cohort peers."""
     rule = "cohort_wealth_outlier"
 
-    if total_assets is None or cohort is None or len(cohort.assets) < 5:
+    if total_assets is None or cohort is None or len(getattr(cohort, "assets", [])) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     assets = float(total_assets)
@@ -283,7 +283,7 @@ def cohort_cash_ratio_outlier(
     """
     rule = "cohort_cash_ratio_outlier"
 
-    if cash_ratio is None or cohort is None or len(cohort.cash_ratios) < 5:
+    if cash_ratio is None or cohort is None or len(getattr(cohort, "cash_ratios", [])) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     ratio = float(cash_ratio)
@@ -324,7 +324,7 @@ def cohort_confidential_ratio_outlier(
     """
     rule = "cohort_confidential_ratio_outlier"
 
-    if confidential_ratio is None or cohort is None or len(cohort.confidential_ratios) < 5:
+    if confidential_ratio is None or cohort is None or len(getattr(cohort, "confidential_ratios", [])) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     ratio = float(confidential_ratio)
@@ -364,7 +364,7 @@ def cohort_dwelling_area_outlier(
     """
     rule = "cohort_dwelling_area_outlier"
 
-    if dwelling_area_m2 is None or cohort is None or len(cohort.dwelling_areas) < 5:
+    if dwelling_area_m2 is None or cohort is None or len(getattr(cohort, "dwelling_areas", [])) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     area = float(dwelling_area_m2)
@@ -404,7 +404,7 @@ def cohort_agri_area_outlier(
     """
     rule = "cohort_agri_area_outlier"
 
-    if agri_area_m2 is None or cohort is None or len(cohort.agri_areas) < 5:
+    if agri_area_m2 is None or cohort is None or len(getattr(cohort, "agri_areas", [])) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     area = float(agri_area_m2)
@@ -445,6 +445,7 @@ def score_declaration_l2(
     government_level: str | None = None,
     primary_region: str | None = None,
     cohort_resolver: "CohortFallbackResolver | None" = None,
+    fallback_cohort_key: str | None = None,
 ) -> list[CohortRuleResult]:
     """Run all Layer 2 (cohort) scoring rules with optional multi-dimensional support.
 
@@ -467,64 +468,62 @@ def score_declaration_l2(
     List of CohortRuleResult objects.
     """
     results = []
-    
-    # Determine which cohort to use for income/assets
-    income_assets_cohort = None
-    income_assets_key = None
-    if cohort_resolver and year and sector and government_level:
-        # Use multi-dimensional resolver (Task 4b)
-        income_assets_key, _ = cohort_resolver.resolve_for_income_assets(
+
+    income_assets_cohort = cohort
+    income_assets_key = fallback_cohort_key if cohort is not None else None
+    if cohort_resolver and year is not None and sector and government_level:
+        preferred_income_key, _ = cohort_resolver.resolve_for_income_assets(
             year, sector, government_level
         )
-        if income_assets_key:
-            income_assets_cohort = cohort_resolver.get_cohort(income_assets_key)
-    else:
-        # Fall back to legacy cohort parameter
-        income_assets_cohort = cohort
-    
-    # Determine which cohort to use for area features (region-sensitive)
-    area_cohort = None
-    area_key = None
-    if cohort_resolver and year and sector and government_level:
-        # Use region-sensitive resolution (Task 4b)
-        area_key, _ = cohort_resolver.resolve_for_area(
+        if preferred_income_key is not None:
+            resolved = cohort_resolver.get_cohort(preferred_income_key)
+            if resolved is not None:
+                income_assets_cohort = resolved
+                income_assets_key = preferred_income_key
+            elif cohort is not None:
+                income_assets_key = fallback_cohort_key if fallback_cohort_key is not None else "legacy"
+
+    area_cohort = cohort
+    area_key = fallback_cohort_key if cohort is not None else None
+    if cohort_resolver and year is not None and sector and government_level:
+        preferred_area_key, _ = cohort_resolver.resolve_for_area(
             year, sector, government_level, primary_region
         )
-        if area_key:
-            area_cohort = cohort_resolver.get_cohort(area_key)
-    else:
-        area_cohort = cohort
-    
-    # Task 4c: Run all rules with optional cohort keys in explanation (4d)
+        if preferred_area_key is not None:
+            resolved = cohort_resolver.get_cohort(preferred_area_key)
+            if resolved is not None:
+                area_cohort = resolved
+                area_key = preferred_area_key
+            elif cohort is not None:
+                area_key = fallback_cohort_key if fallback_cohort_key is not None else "legacy"
+
     income_rule = cohort_income_outlier(total_income, income_assets_cohort)
-    if income_assets_key and income_rule.triggered:
-        # Append cohort key info to explanation
+    if income_assets_key:
         income_rule.explanation += f" [cohort: {income_assets_key}]"
     results.append(income_rule)
     
     wealth_rule = cohort_wealth_outlier(total_assets, income_assets_cohort)
-    if income_assets_key and wealth_rule.triggered:
+    if income_assets_key:
         wealth_rule.explanation += f" [cohort: {income_assets_key}]"
     results.append(wealth_rule)
     
-    # New rules
     cash_rule = cohort_cash_ratio_outlier(cash_ratio, income_assets_cohort)
-    if income_assets_key and cash_rule.triggered:
+    if income_assets_key:
         cash_rule.explanation += f" [cohort: {income_assets_key}]"
     results.append(cash_rule)
     
     conf_rule = cohort_confidential_ratio_outlier(confidential_ratio, income_assets_cohort)
-    if income_assets_key and conf_rule.triggered:
+    if income_assets_key:
         conf_rule.explanation += f" [cohort: {income_assets_key}]"
     results.append(conf_rule)
     
     dwelling_rule = cohort_dwelling_area_outlier(dwelling_area_m2, area_cohort)
-    if area_key and dwelling_rule.triggered:
+    if area_key:
         dwelling_rule.explanation += f" [cohort: {area_key}]"
     results.append(dwelling_rule)
     
     agri_rule = cohort_agri_area_outlier(agri_area_m2, area_cohort)
-    if area_key and agri_rule.triggered:
+    if area_key:
         agri_rule.explanation += f" [cohort: {area_key}]"
     results.append(agri_rule)
     
@@ -702,9 +701,13 @@ class CohortFallbackResolver:
         for key in chain:
             stats = self.cohort_stats.get(key)
             if stats and stats.size >= self.min_cohort_size:
+                if key != chain[0]:
+                    logger.info("Income/assets cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
             # If key is "global", always use it as final fallback even if small
             if key == "global":
+                if key != chain[0]:
+                    logger.info("Income/assets cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
 
         return None, chain
@@ -742,8 +745,12 @@ class CohortFallbackResolver:
         for key in chain:
             stats = self.cohort_stats.get(key)
             if stats and stats.size >= self.min_cohort_size:
+                if key != chain[0]:
+                    logger.info("Area cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
             if key == "global":
+                if key != chain[0]:
+                    logger.info("Area cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
 
         return None, chain

@@ -116,6 +116,17 @@ class TestRoleClusterer:
         assert result.role_family == "other"
         assert 0 <= result.confidence <= 1.0
 
+    def test_cluster_none_input(self, clusterer):
+        """None input should fall back to 'other' with low confidence."""
+        result = clusterer.cluster(None)
+        assert result.role_family == "other"
+        assert result.confidence < 0.5
+
+    def test_cluster_director_department(self, clusterer):
+        """Department director titles should map to a management cluster."""
+        result = clusterer.cluster("Директор департаменту")
+        assert result.role_family == "manager"
+
 
 # ============================================================================
 # Institution Normalization Tests
@@ -181,6 +192,11 @@ class TestInstitutionNormalizer:
         result = normalizer.normalize("ХХХ ЗЗЗ НЕВІДОМА ОРГАНІЗАЦІЯ 777")
         assert result.institution_type == "unknown"
         assert result.confidence == 0.0
+
+    def test_judiciary_institution(self, normalizer):
+        """Judiciary institution names should map to judiciary."""
+        result = normalizer.normalize("Верховний суд України")
+        assert result.institution_type == "judiciary"
 
     def test_empty_name(self, normalizer):
         """Empty/None names should gracefully return 'unknown'."""
@@ -250,6 +266,21 @@ class TestTaxonomyMapper:
     def test_sector_unknown(self, mapper):
         """Unknown sectors should return 'other'."""
         sector, kw = mapper.map_sector("Робітник на заводі незвичайний")
+        assert sector == "other"
+
+    def test_sector_exact_judiciary(self, mapper):
+        """Exact judiciary keywords should map to judiciary."""
+        sector, kw = mapper.map_sector("СУД")
+        assert sector == "judiciary"
+
+    def test_sector_exact_education(self, mapper):
+        """Exact education keywords should map to education."""
+        sector, kw = mapper.map_sector("ОСВІТА")
+        assert sector == "education"
+
+    def test_sector_empty_string(self, mapper):
+        """Empty post type should fall back to other."""
+        sector, kw = mapper.map_sector("")
         assert sector == "other"
 
     def test_govt_level_local(self, mapper):
@@ -420,6 +451,33 @@ class TestCohortFallbackResolver:
         resolver = CohortFallbackResolver(cohort_stats, min_cohort_size=30)
         key, chain = resolver.resolve_for_income_assets(2024, "healthcare", "central")
         assert key == "global"  # Global fallback is always used
+
+    def test_resolve_from_multi_dimensional_smoke(self):
+        """Smoke test for synthetic multi-dimensional cohort building and global fallback."""
+        summaries = [
+            {
+                "year": 2024,
+                "sector": "judiciary",
+                "government_level": "central",
+                "primary_region": "kyiv",
+                "total_income": 100000.0,
+                "total_assets": 500000.0,
+                "cash_ratio": 0.2,
+                "confidential_ratio": 0.1,
+                "dwelling_area_m2": 150.0,
+                "agri_area_m2": 0.0,
+            },
+        ] * 5
+
+        cohorts = build_multi_dimensional_cohorts(summaries, min_cohort_size=5)
+        resolver = CohortFallbackResolver(cohorts, min_cohort_size=6)
+
+        key, chain = resolver.resolve_for_income_assets(2024, "judiciary", "central")
+        assert key == "global"
+
+        global_cohort = resolver.get_cohort(key)
+        assert global_cohort is not None
+        assert global_cohort.size == 5
 
 
 # ============================================================================

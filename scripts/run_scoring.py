@@ -19,7 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from app.config import settings
 from app.ingestion.save_raw import iter_raw_declarations, load_declaration
-from app.scoring.cohorts import CohortKey, build_cohort_distributions
+from app.scoring.cohorts import (
+    CohortFallbackResolver,
+    CohortKey,
+    build_cohort_distributions,
+    build_multi_dimensional_cohorts,
+)
 from app.services.pipeline import process_declaration_full
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -211,8 +216,13 @@ def main() -> None:
                 "primary_region": bio.get("region"),
             }
         )
+        full["_sector"] = sector
+        full["_government_level"] = government_level
+        full["_primary_region"] = bio.get("region")
 
     distributions = build_cohort_distributions(cohort_summaries) if args.layer2 else {}
+    multi_cohorts = build_multi_dimensional_cohorts(cohort_summaries) if args.layer2 else {}
+    resolver = CohortFallbackResolver(multi_cohorts, min_cohort_size=30) if args.layer2 else None
 
     # Pass 2: Final scoring run (with optional Layer2 and Layer3).
     results: list[dict[str, object]] = []
@@ -223,17 +233,61 @@ def main() -> None:
             features = full_first_pass.get("features", {})
             post_type = str(features.get("post_type") or "")
             year = full_first_pass.get("declaration_year")
-            cohort = None
-            if args.layer2 and post_type and year:
-                cohort = distributions.get(CohortKey(post_type=post_type, year=int(year)))
+            sector = str(full_first_pass.get("_sector") or "other")
+            gov_level = str(full_first_pass.get("_government_level") or "other")
+            region = full_first_pass.get("_primary_region")
+            cohort_stats = None
+            cohort_key_used = None
+
+            if args.layer2 and resolver and year:
+                preferred_key, _ = resolver.resolve_for_income_assets(
+                    year=int(year),
+                    sector=sector,
+                    government_level=gov_level,
+                )
+                if preferred_key:
+                    cohort_stats = resolver.get_cohort(preferred_key)
+                    cohort_key_used = preferred_key
+                if cohort_stats is None:
+                    cohort_stats = distributions.get(CohortKey(post_type=post_type, year=int(year)))
+                    cohort_key_used = f"legacy:{post_type}:{year}"
+                    logger.info(
+                        "Layer 2 cohort fallback for %s: tried %s, used %s",
+                        full_first_pass.get("declaration_id", raw.get("id", "unknown")),
+                        preferred_key if preferred_key else f"{year}_{sector}_{gov_level}",
+                        cohort_key_used,
+                    )
+                elif preferred_key and cohort_key_used != preferred_key:
+                    logger.info(
+                        "Layer 2 cohort fallback for %s: tried %s, used %s",
+                        full_first_pass.get("declaration_id", raw.get("id", "unknown")),
+                        f"{year}_{sector}_{gov_level}",
+                        cohort_key_used,
+                    )
 
             # Real score path.
-            full_final = process_declaration_full(raw, cohort_stats=cohort)
+            full_final = process_declaration_full(
+                raw,
+                cohort_stats=cohort_stats,
+                cohort_resolver=resolver,
+                declaration_sector=sector if args.layer2 else None,
+                declaration_gov_level=gov_level if args.layer2 else None,
+                declaration_region=region if args.layer2 else None,
+                cohort_key_used=cohort_key_used,
+            )
 
             # Shadow run: compute baseline without Layer3 and compare.
             if args.shadow_layer3:
                 settings.layer3_enabled = False
-                baseline_full = process_declaration_full(raw, cohort_stats=cohort)
+                baseline_full = process_declaration_full(
+                    raw,
+                    cohort_stats=cohort_stats,
+                    cohort_resolver=resolver,
+                    declaration_sector=sector if args.layer2 else None,
+                    declaration_gov_level=gov_level if args.layer2 else None,
+                    declaration_region=region if args.layer2 else None,
+                    cohort_key_used=cohort_key_used,
+                )
                 settings.layer3_enabled = bool(args.layer3)
             else:
                 baseline_full = full_final
@@ -260,6 +314,9 @@ def main() -> None:
                 "total_income": features.get("total_income"),
                 "total_assets": features.get("total_assets"),
                 "score": total_score,
+                "sector": sector,
+                "government_level": gov_level,
+                "cohort_key_used": cohort_key_used,
                 "triggered_rules": score_data.get("triggered_rules") or [],
                 "explanation": score_data.get("explanation") or "",
                 "layer3_delta": delta,
@@ -319,7 +376,7 @@ def main() -> None:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         fieldnames = [
             "declaration_id", "name", "work_post", "work_place",
-            "total_income", "total_assets", "score",
+            "total_income", "total_assets", "sector", "government_level", "cohort_key_used", "score",
             "triggered_rules", "explanation", "layer3_delta", "layer3_triggered",
         ]
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as fh:

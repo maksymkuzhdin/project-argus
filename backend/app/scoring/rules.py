@@ -23,7 +23,7 @@ from typing import Any
 from app.config import settings
 from app.normalization.currency import to_uah
 from app.scoring import layer3 as layer3_inference
-from app.scoring.cohorts import compute_percentile_rank, get_percentile_value
+from app.scoring.cohorts import compute_percentile_rank, get_percentile_value, score_declaration_l2
 from app.scoring.tuning import config_value, load_scoring_config
 
 
@@ -936,6 +936,11 @@ def score_declaration(
     declaration_year: int | None = None,
     raw_declaration: dict[str, Any] | None = None,
     cohort_stats: Any | None = None,
+    cohort_resolver: Any | None = None,
+    declaration_sector: str | None = None,
+    declaration_gov_level: str | None = None,
+    declaration_region: str | None = None,
+    cohort_key_used: str | None = None,
 ) -> ScoringResult:
     """Run all Layer 1 scoring rules and return an aggregate result.
 
@@ -948,6 +953,9 @@ def score_declaration(
         Optional ``CohortStats`` from ``app.scoring.cohorts``. When provided,
         CR16 cohort-relative outlier rules are evaluated and folded into
         the corruption-risk score.
+    cohort_resolver, declaration_sector, declaration_gov_level, declaration_region, cohort_key_used:
+        Optional taxonomy-aware cohort inputs used to evaluate the Layer 2
+        cohort rules from ``app.scoring.cohorts.score_declaration_l2``.
 
     Returns
     -------
@@ -1727,6 +1735,41 @@ def score_declaration(
                         f"({cohort_median:.0%})."
                     ),
                 ))
+
+    layer2_rules = score_declaration_l2(
+        total_income=total_income,
+        total_assets=total_assets,
+        cash_ratio=cash_holdings / (cash_holdings + bank_deposits) if cash_holdings is not None and bank_deposits is not None and (cash_holdings + bank_deposits) > 0 else None,
+        confidential_ratio=_confidential_ratio_from_rows(incomes, monetary_assets, real_estate),
+        dwelling_area_m2=dwelling_area if dwelling_area > 0 else None,
+        agri_area_m2=agri_area if agri_area > 0 else None,
+        cohort=cohort_stats,
+        year=declaration_year,
+        sector=declaration_sector,
+        government_level=declaration_gov_level,
+        primary_region=declaration_region,
+        cohort_resolver=cohort_resolver,
+        fallback_cohort_key=cohort_key_used,
+    )
+    for layer2_rule in layer2_rules:
+        if not layer2_rule.triggered:
+            continue
+        if layer2_rule.rule_name not in {
+            "cohort_cash_ratio_outlier",
+            "cohort_confidential_ratio_outlier",
+            "cohort_dwelling_area_outlier",
+            "cohort_agri_area_outlier",
+        }:
+            continue
+        flags.append(RuleResult(
+            rule_name=layer2_rule.rule_name,
+            score=layer2_rule.score,
+            triggered=True,
+            explanation=layer2_rule.explanation,
+            category="opacity" if layer2_rule.rule_name == "cohort_confidential_ratio_outlier" else "corruption",
+            severity="MEDIUM",
+            confidence=1.0,
+        ))
 
     if getattr(settings, "layer3_enabled", False) and getattr(settings, "layer3_model_path", ""):
         try:
