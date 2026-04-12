@@ -1,18 +1,11 @@
-"""Train Layer 3 Isolation Forest artifacts (global + per-cohort).
+"""Train Layer 3 Isolation Forest artifacts (global + per-cohort) from DB data.
 
-Year-over-year fields used by scripts/run_timeline.py via PersonTimeline.changes
-(from backend/app/normalization/assemble_timeline.py):
-- income_delta
-- monetary_delta
-- cash_delta
-- asset_growth
-- income_growth
-- unknown_share_delta
-- major_assets_appeared
-- major_assets_disappeared
+This script reads processed declarations from PostgreSQL, builds the canonical
+Layer 3 feature vectors, trains:
+- a global fallback model, and
+- per-cohort models for sufficiently large cohorts.
 
-Example:
-    python scripts/train_layer3.py --data-dir data/raw --year 2024 --output argus/backend/models/layer3_iforest.pkl
+Artifacts are saved to --model-dir and indexed by layer3_registry.json.
 """
 
 from __future__ import annotations
@@ -20,21 +13,34 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import pickle
-import random
 import sys
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
-from app.ingestion.save_raw import iter_raw_declarations, load_declaration  # type: ignore[import-not-found]
+from app.db.models import (  # type: ignore[import-not-found]
+    BankAccount,
+    DeclarantProfile,
+    IncomeEntry,
+    MonetaryAsset,
+    RealEstateAsset,
+    Vehicle,
+)
+from app.db.session import SessionLocal  # type: ignore[import-not-found]
+from app.features.cash import classify_monetary_assets  # type: ignore[import-not-found]
+from app.features.income import compute_total_income  # type: ignore[import-not-found]
 from app.features.ownership import compute_ownership_summary  # type: ignore[import-not-found]
+from app.features.wealth import compute_total_assets  # type: ignore[import-not-found]
 from app.normalization.assemble_timeline import assemble_timeline  # type: ignore[import-not-found]
-from app.services.pipeline import process_declaration_full  # type: ignore[import-not-found]
-from app.config import settings  # type: ignore[import-not-found]
+from app.scoring.cohort_taxonomy import (  # type: ignore[import-not-found]
+    TaxonomyNormalizer,
+    create_normalizer_from_config,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -80,6 +86,21 @@ DELTA_FEATURE_DEFAULTS: dict[str, float] = {
 }
 
 
+@dataclass
+class TrainingRow:
+    declaration_id: str
+    cohort_key: str
+    feature_map: dict[str, float]
+
+
+@dataclass
+class TrainSummaryRow:
+    cohort_key: str
+    n_train: int
+    contamination: float
+    artifact_path: str
+
+
 def _slug(value: str | None) -> str:
     raw = (value or "other").strip().lower()
     out = []
@@ -110,6 +131,46 @@ def _asset_income_ratio(assets: float, income: float) -> float:
     if income > 0:
         return assets / income
     return 10.0 if assets > 0 else 0.0
+
+
+def _count_unknowns(rows_list: list[list[dict[str, Any]]]) -> tuple[int, int]:
+    total = 0
+    unknown = 0
+    status_fields = [
+        "amount_status",
+        "total_area_status",
+        "cost_assessment_status",
+        "organization_status",
+    ]
+    for rows in rows_list:
+        for row in rows:
+            for sf in status_fields:
+                if sf in row:
+                    total += 1
+                    if row[sf] is not None:
+                        unknown += 1
+    return total, unknown
+
+
+def _count_confidentials(rows_list: list[list[dict[str, Any]]]) -> tuple[int, int]:
+    total = 0
+    confidential = 0
+    status_fields = [
+        "amount_status",
+        "total_area_status",
+        "cost_assessment_status",
+        "organization_status",
+    ]
+    confidential_statuses = {"confidential", "redacted_other"}
+
+    for rows in rows_list:
+        for row in rows:
+            for sf in status_fields:
+                if sf in row:
+                    total += 1
+                    if str(row.get(sf) or "") in confidential_statuses:
+                        confidential += 1
+    return total, confidential
 
 
 def build_feature_vector(
@@ -189,7 +250,10 @@ def build_feature_vector(
     return {name: float(feature_map.get(name, 0.0)) for name in FEATURE_NAMES}
 
 
-def _max_single_asset_jump_pct(prev_assets: dict[str, Decimal], curr_assets: dict[str, Decimal]) -> float:
+def _max_single_asset_jump_pct(
+    prev_assets: dict[str, Decimal],
+    curr_assets: dict[str, Decimal],
+) -> float:
     shared = set(prev_assets.keys()) & set(curr_assets.keys())
     max_jump = 0.0
     for key in shared:
@@ -241,8 +305,16 @@ def _compute_timeline_deltas(full_entries: list[dict[str, Any]]) -> dict[str, di
             prev_bank = _as_float(prev.bank)
             curr_cash = _as_float(curr.cash)
             curr_bank = _as_float(curr.bank)
-            prev_cash_ratio = (prev_cash / (prev_cash + prev_bank)) if (prev_cash + prev_bank) > 0 else 0.0
-            curr_cash_ratio = (curr_cash / (curr_cash + curr_bank)) if (curr_cash + curr_bank) > 0 else 0.0
+            prev_cash_ratio = (
+                (prev_cash / (prev_cash + prev_bank))
+                if (prev_cash + prev_bank) > 0
+                else 0.0
+            )
+            curr_cash_ratio = (
+                (curr_cash / (curr_cash + curr_bank))
+                if (curr_cash + curr_bank) > 0
+                else 0.0
+            )
 
             prev_conf = conf_ratio_by_decl.get(str(prev.declaration_id), 0.0)
             curr_conf = conf_ratio_by_decl.get(str(curr.declaration_id), 0.0)
@@ -261,163 +333,281 @@ def _compute_timeline_deltas(full_entries: list[dict[str, Any]]) -> dict[str, di
                 "asset_income_ratio_delta": curr_asset_income - prev_asset_income,
                 "new_property_count": float(len(appeared)),
                 "dropped_property_count": float(len(disappeared)),
-                "max_single_asset_jump_pct": _max_single_asset_jump_pct(prev.major_assets, curr.major_assets),
+                "max_single_asset_jump_pct": _max_single_asset_jump_pct(
+                    prev.major_assets,
+                    curr.major_assets,
+                ),
             }
 
     return deltas_by_declaration
 
 
-def _default_model_dir() -> Path:
-    raw_model_path = str(getattr(settings, "layer3_model_path", "") or "").strip()
-    if not raw_model_path:
-        return Path("backend/models")
-    p = Path(raw_model_path)
-    if p.suffix.lower() == ".pkl":
-        return p.parent
-    return p
+def _auto_contamination(n_samples: int) -> float:
+    if n_samples <= 0:
+        return 0.02
+    return min(0.15, max(0.02, 1.0 / math.sqrt(float(n_samples))))
 
 
-def _train_pipeline(X: list[list[float]], contamination: float, seed: int) -> Any:
+def _to_float_list(values: Any) -> list[float]:
+    if values is None:
+        return []
+    return [float(v) for v in values]
+
+
+def _train_artifact(X: list[list[float]], contamination: float) -> dict[str, Any]:
     from sklearn.ensemble import IsolationForest  # type: ignore[import-not-found]
-    from sklearn.impute import SimpleImputer  # type: ignore[import-not-found]
     from sklearn.pipeline import Pipeline  # type: ignore[import-not-found]
     from sklearn.preprocessing import RobustScaler  # type: ignore[import-not-found]
 
     pipeline = Pipeline(
         steps=[
-            ("imputer", SimpleImputer(strategy="median")),
             ("scaler", RobustScaler()),
             (
-                "model",
+                "iso",
                 IsolationForest(
-                    n_estimators=300,
                     contamination=contamination,
-                    random_state=seed,
-                    n_jobs=-1,
+                    random_state=42,
+                    n_estimators=200,
                 ),
             ),
         ]
     )
     pipeline.fit(X)
-    return pipeline
+
+    scores = [float(v) for v in pipeline.decision_function(X)]
+    decision_min = min(scores) if scores else 0.0
+    decision_max = max(scores) if scores else 0.0
+
+    scaler = pipeline.named_steps.get("scaler")
+    medians = _to_float_list(getattr(scaler, "center_", []))
+    scales = _to_float_list(getattr(scaler, "scale_", []))
+
+    return {
+        "model": pipeline,
+        "feature_order": list(FEATURE_NAMES),
+        "decision_min": float(decision_min),
+        "decision_max": float(decision_max),
+        "robust_medians": medians,
+        "robust_scales": scales,
+    }
 
 
-def _permutation_feature_contributions(
-    model: Any,
-    X: list[list[float]],
-    *,
-    seed: int,
-) -> list[tuple[str, float]]:
-    if not X:
-        return []
-    base_scores = [float(s) for s in model.decision_function(X)]
-    rng = random.Random(seed)
-    rows = len(X)
-    cols = len(FEATURE_NAMES)
-    importances: list[tuple[str, float]] = []
-
-    for col_idx in range(cols):
-        shuffled = [row[:] for row in X]
-        col_vals = [shuffled[r][col_idx] for r in range(rows)]
-        rng.shuffle(col_vals)
-        for r in range(rows):
-            shuffled[r][col_idx] = col_vals[r]
-
-        shuffled_scores = [float(s) for s in model.decision_function(shuffled)]
-        mean_abs_change = sum(
-            abs(base_scores[i] - shuffled_scores[i]) for i in range(rows)
-        ) / float(rows)
-        importances.append((FEATURE_NAMES[col_idx], mean_abs_change))
-
-    importances.sort(key=lambda x: x[1], reverse=True)
-    return importances
-
-
-def _log_training_summary(cohort_key: str, model: Any, X: list[list[float]], seed: int) -> None:
-    predictions = model.predict(X)
-    anomalies = sum(1 for p in predictions if int(p) == -1)
-    anomaly_rate = (anomalies / len(predictions)) * 100.0 if predictions is not None and len(predictions) > 0 else 0.0
-    top3 = _permutation_feature_contributions(model, X, seed=seed)[:3]
-    top3_text = ", ".join(f"{name}={score:.5f}" for name, score in top3) if top3 else "n/a"
-
-    logger.info(
-        "Cohort=%s | samples=%d | features=%d | anomaly_rate=%.2f%% | top3=%s",
-        cohort_key,
-        len(X),
-        len(FEATURE_NAMES),
-        anomaly_rate,
-        top3_text,
+def _taxonomy_normalizer() -> TaxonomyNormalizer:
+    yaml_path = (
+        Path(__file__).resolve().parent.parent
+        / "backend"
+        / "app"
+        / "scoring"
+        / "cohort_taxonomy.yaml"
     )
+    return create_normalizer_from_config(str(yaml_path))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Train Layer 3 Isolation Forest model")
-    parser.add_argument("--data-dir", type=Path, default=Path("data/raw"), help="Raw declaration directory")
-    parser.add_argument("--year", type=str, default=None, help="Optional year filter")
-    parser.add_argument("--limit", type=int, default=0, help="Optional cap on number of declarations")
-    parser.add_argument("--output", type=Path, default=None, help="Optional legacy output .pkl path for the global model")
-    parser.add_argument("--contamination", type=float, default=0.05, help="IsolationForest contamination")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--min-samples", type=int, default=50, help="Deprecated: kept for CLI compatibility")
-    parser.add_argument(
-        "--model-dir",
-        type=Path,
-        default=_default_model_dir(),
-        help="Directory where Layer 3 model artifacts are stored",
-    )
-    parser.add_argument(
-        "--min-cohort-size",
-        type=int,
-        default=30,
-        help="Minimum declarations required to train a cohort model",
-    )
-    parser.add_argument(
-        "--low-data-threshold",
-        type=int,
-        default=50,
-        help="Cohorts with samples below this threshold are flagged as low_data",
-    )
-    args = parser.parse_args()
+def _profile_to_bio(profile: DeclarantProfile) -> dict[str, Any]:
+    return {
+        "firstname": profile.firstname,
+        "lastname": profile.lastname,
+        "middlename": profile.middlename,
+        "work_post": profile.work_post,
+        "work_place": profile.work_place,
+        "post_type": profile.post_type,
+        "post_category": profile.post_category,
+    }
 
+
+def _income_to_dict(row: IncomeEntry) -> dict[str, Any]:
+    return {
+        "person_ref": row.person_ref,
+        "income_type": row.income_type,
+        "income_type_other": row.income_type_other,
+        "amount": float(row.amount) if row.amount is not None else None,
+        "amount_raw": row.amount_raw,
+        "amount_status": row.amount_status,
+        "source_name": row.source_name,
+        "source_code": row.source_code,
+        "source_type": row.source_type,
+    }
+
+
+def _monetary_to_dict(row: MonetaryAsset) -> dict[str, Any]:
+    return {
+        "person_ref": row.person_ref,
+        "asset_type": row.asset_type,
+        "currency_raw": row.currency_raw,
+        "currency_code": row.currency_code,
+        "amount": float(row.amount) if row.amount is not None else None,
+        "amount_raw": row.amount_raw,
+        "amount_status": None,
+        "organization": row.organization,
+        "organization_status": row.organization_status,
+        "ownership_type": row.ownership_type,
+    }
+
+
+def _real_estate_to_dict(row: RealEstateAsset) -> dict[str, Any]:
+    return {
+        "object_type": row.object_type,
+        "other_object_type": row.other_object_type,
+        "total_area": float(row.total_area) if row.total_area is not None else None,
+        "total_area_raw": row.total_area_raw,
+        "total_area_status": row.total_area_status,
+        "cost_assessment": float(row.cost_assessment) if row.cost_assessment is not None else None,
+        "cost_assessment_raw": row.cost_assessment_raw,
+        "cost_assessment_status": row.cost_assessment_status,
+        "owning_date": row.owning_date,
+        "right_belongs_raw": row.right_belongs_raw,
+        "right_belongs_resolved": row.right_belongs_resolved,
+        "ownership_type": row.ownership_type,
+        "percent_ownership": row.percent_ownership,
+        "country": row.country,
+        "region": row.region,
+        "district": row.district,
+        "community": row.community,
+        "city": row.city,
+        "city_type": row.city_type,
+    }
+
+
+def _vehicle_to_dict(row: Vehicle) -> dict[str, Any]:
+    return {
+        "object_type": row.object_type,
+        "brand": row.brand,
+        "model": row.model,
+        "graduation_year": row.graduation_year,
+        "owning_date": row.owning_date,
+        "cost_date": float(row.cost_date) if row.cost_date is not None else None,
+        "ownership_type": row.ownership_type,
+        "right_belongs_resolved": row.right_belongs_resolved,
+    }
+
+
+def _bank_to_dict(row: BankAccount) -> dict[str, Any]:
+    return {
+        "institution_name": row.institution_name,
+        "institution_code": row.institution_code,
+        "account_owner_resolved": row.account_owner_resolved,
+    }
+
+
+def _load_full_entries_from_db() -> list[dict[str, Any]]:
+    db = SessionLocal()
     try:
-        from sklearn.ensemble import IsolationForest  # noqa: F401  # type: ignore[import-not-found]
-        from sklearn.impute import SimpleImputer  # noqa: F401  # type: ignore[import-not-found]
-        from sklearn.pipeline import Pipeline  # noqa: F401  # type: ignore[import-not-found]
-        from sklearn.preprocessing import RobustScaler  # noqa: F401  # type: ignore[import-not-found]
-    except Exception as exc:  # pragma: no cover
-        raise SystemExit(
-            "scikit-learn is required. Install backend requirements before training."
-        ) from exc
+        profiles = (
+            db.query(DeclarantProfile)
+            .order_by(DeclarantProfile.declaration_year.asc().nullslast())
+            .all()
+        )
 
-    files = iter_raw_declarations(args.data_dir, year=args.year)
-    if args.limit > 0:
-        files = files[: args.limit]
+        full_entries: list[dict[str, Any]] = []
+        for profile in profiles:
+            decl_id = profile.declaration_id
+            if not decl_id:
+                continue
 
-    if not files:
-        raise SystemExit("No raw declaration files found for training.")
+            incomes = [
+                _income_to_dict(r)
+                for r in db.query(IncomeEntry)
+                .filter(IncomeEntry.declaration_id == decl_id)
+                .all()
+            ]
+            monetary = [
+                _monetary_to_dict(r)
+                for r in db.query(MonetaryAsset)
+                .filter(MonetaryAsset.declaration_id == decl_id)
+                .all()
+            ]
+            real_estate = [
+                _real_estate_to_dict(r)
+                for r in db.query(RealEstateAsset)
+                .filter(RealEstateAsset.declaration_id == decl_id)
+                .all()
+            ]
+            vehicles = [
+                _vehicle_to_dict(r)
+                for r in db.query(Vehicle)
+                .filter(Vehicle.declaration_id == decl_id)
+                .all()
+            ]
+            bank_accounts = [
+                _bank_to_dict(r)
+                for r in db.query(BankAccount)
+                .filter(BankAccount.declaration_id == decl_id)
+                .all()
+            ]
 
-    random.seed(args.seed)
+            total_income = compute_total_income(incomes)
+            total_assets = compute_total_assets(real_estate, monetary)
+            cash_bank = classify_monetary_assets(monetary)
+            ownership = compute_ownership_summary(real_estate, vehicles, bank_accounts)
 
-    full_entries: list[dict[str, Any]] = []
-    for f in files:
-        raw = load_declaration(f)
-        full = process_declaration_full(raw)
-        full_entries.append(full)
+            total_fields, unknown_fields = _count_unknowns([incomes, monetary, real_estate])
+            conf_total_fields, confidential_fields = _count_confidentials(
+                [incomes, monetary, real_estate]
+            )
+            confidential_ratio = (
+                confidential_fields / conf_total_fields if conf_total_fields > 0 else 0.0
+            )
 
-    if len(full_entries) < 2:
-        raise SystemExit("Not enough samples for training (< 2).")
+            full_entries.append(
+                {
+                    "declaration_id": str(decl_id),
+                    "user_declarant_id": profile.user_declarant_id,
+                    "declaration_year": profile.declaration_year,
+                    "declaration_type": profile.declaration_type,
+                    "bio": _profile_to_bio(profile),
+                    "real_estate": real_estate,
+                    "vehicles": vehicles,
+                    "bank_accounts": bank_accounts,
+                    "incomes": incomes,
+                    "monetary": monetary,
+                    "ownership": ownership,
+                    "features": {
+                        "total_income": str(total_income) if total_income else None,
+                        "total_assets": str(total_assets) if total_assets else None,
+                        "cash": str(cash_bank.cash) if cash_bank.cash else None,
+                        "bank": str(cash_bank.bank) if cash_bank.bank else None,
+                        "total_value_fields": total_fields,
+                        "unknown_value_fields": unknown_fields,
+                        "confidential_ratio": confidential_ratio,
+                    },
+                }
+            )
 
+        return full_entries
+    finally:
+        db.close()
+
+
+def _build_training_rows(
+    full_entries: list[dict[str, Any]],
+    normalizer: TaxonomyNormalizer,
+) -> list[TrainingRow]:
     delta_by_decl = _compute_timeline_deltas(full_entries)
+    rows: list[TrainingRow] = []
 
-    rows: list[dict[str, Any]] = []
     for full in full_entries:
         features = full.get("features") or {}
-        ownership_summary = compute_ownership_summary(
-            list(full.get("real_estate") or []),
-            list(full.get("vehicles") or []),
-            list(full.get("bank_accounts") or []),
+        bio = full.get("bio") or {}
+        ownership = full.get("ownership")
+
+        work_post = str(bio.get("work_post") or "")
+        work_place = str(bio.get("work_place") or "")
+        post_type = str(bio.get("post_type") or "")
+        post_category = str(bio.get("post_category") or "")
+
+        norm = normalizer.normalize(
+            work_post=work_post,
+            work_place=work_place,
+            post_type=post_type,
+            post_category=post_category,
         )
-        deltas = delta_by_decl.get(str(full.get("declaration_id") or ""), DELTA_FEATURE_DEFAULTS)
+        cohort_key = f"{_slug(norm.sector)}_{_slug(norm.government_level)}"
+
+        deltas = delta_by_decl.get(
+            str(full.get("declaration_id") or ""),
+            DELTA_FEATURE_DEFAULTS,
+        )
+
         feature_map = build_feature_vector(
             total_income=features.get("total_income"),
             total_assets=features.get("total_assets"),
@@ -425,9 +615,9 @@ def main() -> None:
             bank_deposits=features.get("bank"),
             total_value_fields=int(features.get("total_value_fields") or 0),
             unknown_value_fields=int(features.get("unknown_value_fields") or 0),
-            ownership_declarant=ownership_summary.declarant_items,
-            ownership_family=ownership_summary.family_items,
-            ownership_total=ownership_summary.total_items,
+            ownership_declarant=int(getattr(ownership, "declarant_items", 0)),
+            ownership_family=int(getattr(ownership, "family_items", 0)),
+            ownership_total=int(getattr(ownership, "total_items", 0)),
             declaration_year=full.get("declaration_year"),
             incomes_count=len(full.get("incomes", [])),
             real_estate_count=len(full.get("real_estate", [])),
@@ -444,117 +634,184 @@ def main() -> None:
             max_single_asset_jump_pct=float(deltas.get("max_single_asset_jump_pct", 0.0)),
         )
 
-        taxonomy = full.get("cohort_taxonomy") or {}
-        sector = _slug(
-            str(
-                full.get("_sector")
-                or taxonomy.get("sector")
-                or "other"
-            )
-        )
-        government_level = _slug(
-            str(
-                full.get("_government_level")
-                or taxonomy.get("government_level")
-                or "other"
-            )
-        )
-
         rows.append(
-            {
-                "declaration_id": str(full.get("declaration_id") or ""),
-                "cohort_key": f"{sector}_{government_level}",
-                "feature_map": feature_map,
-            }
+            TrainingRow(
+                declaration_id=str(full.get("declaration_id") or ""),
+                cohort_key=cohort_key,
+                feature_map=feature_map,
+            )
         )
 
-    matrix = [[r["feature_map"].get(name, 0.0) for name in FEATURE_NAMES] for r in rows]
-    if len(matrix) < args.min_samples:
-        logger.warning(
-            "Sample count %d is below --min-samples=%d, but training proceeds to keep global fallback available.",
-            len(matrix),
-            args.min_samples,
+    return rows
+
+
+def _print_summary_table(rows: list[TrainSummaryRow]) -> None:
+    if not rows:
+        logger.info("No artifacts were produced.")
+        return
+
+    key_w = max(len("cohort key"), max(len(r.cohort_key) for r in rows))
+    n_w = max(len("n_train"), max(len(str(r.n_train)) for r in rows))
+    c_w = max(
+        len("contamination"),
+        max(len(f"{r.contamination:.4f}") for r in rows),
+    )
+
+    header = (
+        f"{'cohort key':<{key_w}} | {'n_train':>{n_w}} | "
+        f"{'contamination':>{c_w}} | artifact path"
+    )
+    sep = "-" * len(header)
+    print(header)
+    print(sep)
+    for row in rows:
+        print(
+            f"{row.cohort_key:<{key_w}} | {row.n_train:>{n_w}} | "
+            f"{row.contamination:>{c_w}.4f} | {row.artifact_path}"
         )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Train Layer 3 Isolation Forest models from DB",
+    )
+    parser.add_argument(
+        "--model-dir",
+        type=Path,
+        default=Path("backend/models"),
+        help="Directory where Layer 3 model artifacts are stored",
+    )
+    parser.add_argument(
+        "--min-cohort-samples",
+        type=int,
+        default=200,
+        help="Minimum samples required to train a cohort-specific model",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print cohort sizes and exit without training or writing artifacts",
+    )
+    args = parser.parse_args()
+
+    try:
+        from sklearn.ensemble import IsolationForest  # noqa: F401  # type: ignore[import-not-found]
+        from sklearn.pipeline import Pipeline  # noqa: F401  # type: ignore[import-not-found]
+        from sklearn.preprocessing import RobustScaler  # noqa: F401  # type: ignore[import-not-found]
+    except Exception as exc:  # pragma: no cover
+        raise SystemExit(
+            "scikit-learn is required. Install backend requirements before training."
+        ) from exc
+
+    full_entries = _load_full_entries_from_db()
+    if not full_entries:
+        raise SystemExit("No processed declarations found in database.")
+
+    normalizer = _taxonomy_normalizer()
+    training_rows = _build_training_rows(full_entries, normalizer)
+    if not training_rows:
+        raise SystemExit("No training rows could be constructed from DB data.")
+
+    by_cohort: dict[str, list[TrainingRow]] = {}
+    for row in training_rows:
+        by_cohort.setdefault(row.cohort_key, []).append(row)
+
+    qualifying_keys = {
+        key for key, members in by_cohort.items() if len(members) >= args.min_cohort_samples
+    }
+
+    if args.dry_run:
+        print("cohort key | n_train | qualifies")
+        print("--------------------------------")
+        for key in sorted(by_cohort.keys()):
+            n = len(by_cohort[key])
+            qualifies = "yes" if key in qualifying_keys else "no"
+            print(f"{key} | {n} | {qualifies}")
+        print(f"global | {len(training_rows)} | yes")
+        return
 
     model_dir = Path(args.model_dir)
-    if model_dir.suffix.lower() == ".pkl":
-        model_dir = model_dir.parent
     model_dir.mkdir(parents=True, exist_ok=True)
 
     registry: dict[str, Any] = {
-        "trained_at": datetime.now(timezone.utc).isoformat(),
         "global": {},
         "cohorts": {},
     }
+    summary_rows: list[TrainSummaryRow] = []
 
-    global_model = _train_pipeline(matrix, contamination=args.contamination, seed=args.seed)
+    global_matrix = [
+        [row.feature_map.get(name, 0.0) for name in FEATURE_NAMES]
+        for row in training_rows
+    ]
+    global_contamination = _auto_contamination(len(global_matrix))
+    global_artifact = _train_artifact(global_matrix, contamination=global_contamination)
+
     global_name = "layer3_global.pkl"
     global_path = model_dir / global_name
     with global_path.open("wb") as fh:
-        pickle.dump(global_model, fh)
+        pickle.dump(global_artifact, fh)
 
-    _log_training_summary("global", global_model, matrix, args.seed)
     registry["global"] = {
         "path": global_name,
-        "n_samples": len(matrix),
-        "feature_names": FEATURE_NAMES,
-        "contamination": args.contamination,
+        "n_train": len(global_matrix),
+        "contamination": global_contamination,
     }
+    summary_rows.append(
+        TrainSummaryRow(
+            cohort_key="global",
+            n_train=len(global_matrix),
+            contamination=global_contamination,
+            artifact_path=global_name,
+        )
+    )
 
-    if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with args.output.open("wb") as fh:
-            pickle.dump(global_model, fh)
-        logger.info("Legacy global model output written to %s", args.output)
-
-    cohort_rows: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        cohort_rows.setdefault(str(row["cohort_key"]), []).append(row)
-
-    for cohort_key, members in sorted(cohort_rows.items(), key=lambda kv: kv[0]):
-        n_samples = len(members)
-        if n_samples < args.min_cohort_size:
-            logger.warning(
-                "Skipping cohort %s due to insufficient data (%d < %d).",
-                cohort_key,
-                n_samples,
-                args.min_cohort_size,
-            )
-            continue
-
+    for cohort_key in sorted(qualifying_keys):
+        members = by_cohort[cohort_key]
         cohort_matrix = [
-            [m["feature_map"].get(name, 0.0) for name in FEATURE_NAMES]
+            [m.feature_map.get(name, 0.0) for name in FEATURE_NAMES]
             for m in members
         ]
-        cohort_model = _train_pipeline(
-            cohort_matrix,
-            contamination=args.contamination,
-            seed=args.seed,
-        )
+        contamination = _auto_contamination(len(cohort_matrix))
+        artifact = _train_artifact(cohort_matrix, contamination=contamination)
 
         model_name = f"layer3_{cohort_key}.pkl"
         model_path = model_dir / model_name
         with model_path.open("wb") as fh:
-            pickle.dump(cohort_model, fh)
+            pickle.dump(artifact, fh)
 
-        low_data = n_samples < args.low_data_threshold
-        _log_training_summary(cohort_key, cohort_model, cohort_matrix, args.seed)
         registry["cohorts"][cohort_key] = {
             "path": model_name,
-            "n_samples": n_samples,
-            "feature_names": FEATURE_NAMES,
-            "contamination": args.contamination,
-            "low_data": low_data,
+            "n_train": len(cohort_matrix),
+            "contamination": contamination,
         }
+        summary_rows.append(
+            TrainSummaryRow(
+                cohort_key=cohort_key,
+                n_train=len(cohort_matrix),
+                contamination=contamination,
+                artifact_path=model_name,
+            )
+        )
 
     registry_path = model_dir / "layer3_registry.json"
-    registry_path.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    logger.info(
-        "Trained Layer 3 models: global + %d cohort models -> %s",
-        len(registry["cohorts"]),
-        model_dir,
+    registry_path.write_text(
+        json.dumps(registry, indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
+
+    _print_summary_table(summary_rows)
+
+    small_cohort_total = sum(
+        len(members)
+        for key, members in by_cohort.items()
+        if key not in qualifying_keys
+    )
+    logger.info(
+        "Trained %d cohort models (+global). Non-qualifying cohort samples merged into global fallback: %d",
+        len(qualifying_keys),
+        small_cohort_total,
+    )
+    logger.info("Wrote Layer 3 artifacts and registry to %s", model_dir)
 
 
 if __name__ == "__main__":

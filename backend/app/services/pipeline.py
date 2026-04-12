@@ -247,6 +247,14 @@ def process_declaration_full(
     )
 
     # 4. Score
+    if cohort_taxonomy is not None:
+        if declaration_sector is None:
+            declaration_sector = cohort_taxonomy.sector
+        if declaration_gov_level is None:
+            declaration_gov_level = cohort_taxonomy.government_level
+        if cohort_key_used is None:
+            cohort_key_used = f"{declaration_sector or 'unknown'}_{declaration_gov_level or 'unknown'}"
+
     result = score_declaration(
         total_income=total_income,
         total_assets=total_assets,
