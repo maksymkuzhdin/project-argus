@@ -1,0 +1,203 @@
+# Layer 1 scoring thresholds and weights.
+# Edit these values to retune the scorer without changing code.
+
+layer1:
+  aggregation:
+    raw_total_divisor: 12.0
+    corruption_to_opacity_weight: 0.5
+    quality_to_total_weight: 0.1
+    quality_cap: 2.0
+    opacity_cap_when_no_corruption_ratio: 0.25
+    interaction_bonuses:
+      cr1_cr2: 3.0
+      cr10_cr13: 3.0
+
+  data_quality:
+    ownership_share_total_max: 110.0
+    ownership_share_total_min: 10.0
+    extreme_numeric_value_max: 10000000000
+    extreme_area_value_max: 10000000
+
+  legacy:
+    unexplained_wealth:
+      threshold_ratio: 3.0
+    cash_to_bank_ratio:
+      threshold: 0.8
+    unknown_value_frequency:
+      threshold: 0.5
+      min_fields: 4
+    acquisition_income_mismatch:
+      threshold_ratio: 1.5
+    zero_income_with_assets:
+      min_assets: 100000
+    family_asset_concentration:
+      threshold: 0.7
+      min_items: 3
+
+  corruption:
+    cr1_cash_to_income:
+      income_min: 10000
+      extreme_ratio: 10.0
+      high_ratio: 5.0
+      medium_ratio: 3.0
+      base_weight: 5.0
+
+    cr2_fx_cash:
+      fx_share_high: 0.7
+      fx_share_medium: 0.5
+      fx_to_income_high: 3.0
+      fx_to_income_medium: 1.5
+      base_weight: 4.0
+
+    cr3_acquisition_income:
+      extreme_ratio: 7.0
+      high_ratio: 3.0
+      medium_ratio: 2.0
+      one_off_income_fraction: 0.6
+      base_weight: 5.0
+
+    cr4_low_income_acquisitions:
+      income_max: 150000
+      property_cost_high: 500000
+      property_area_high: 10000
+      property_cost_area_high: 300000
+      vehicle_cost_high: 300000
+      minimum_count: 2
+      base_weight: 4.0
+
+    cr6_dwelling_area:
+      relative:
+        min_samples: 5
+        high_percentile: 0.99
+        medium_percentile: 0.95
+      absolute:
+        high_area: 400
+        medium_area: 250
+      base_weight: 3.0
+      confidence: 0.8
+
+    cr6_agricultural_area:
+      relative:
+        min_samples: 5
+        high_percentile: 0.99
+        medium_percentile: 0.95
+      absolute:
+        high_area: 500000
+        medium_area: 100000
+      base_weight: 3.0
+      confidence: 0.8
+
+    cr7_luxury_vehicles:
+      income_high_cutoff: 1000000
+      income_medium_cutoff: 600000
+      vehicle_count_high: 2
+      vehicle_count_medium: 1
+      vehicles_per_adult_high: 3.5
+      vehicles_per_adult_medium: 2.5
+      low_income_cutoff_for_vehicle_density: 500000
+      base_weight: 3.0
+      confidence_income: 0.9
+      confidence_density: 0.8
+
+    cr8_agri_assets:
+      agri_area_min: 100000
+      agri_area_high: 500000
+      base_weight: 3.0
+      confidence: 0.8
+
+    cr9_rentable_assets:
+      low_rent_income: 30000
+      high_object_count: 3
+      base_weight: 3.0
+      confidence: 0.7
+
+    cr10_unknown_valuations:
+      high_major_unknown_count: 2
+      base_weight: 4.0
+      confidence: 0.9
+
+    cr11_family_major_owner:
+      major_ownership_percent: 99.0
+      major_asset_cost_min: 500000
+      income_max: 100000
+      monetary_asset_min: 500000
+      base_weight: 5.0
+      confidence: 0.8
+
+    cr12_wealth_concentration:
+      minimum_income: 50000
+      ratio_minimum: 2.0
+      ratio_high: 5.0
+      base_weight: 3.0
+      confidence: 0.7
+
+    cr13_family_no_info:
+      minimum_count: 3
+      base_weight: 5.0
+      confidence: 1.0
+
+  timeline:
+    yoy_income_change:
+      growth_threshold: 3.0
+      drop_threshold: 0.25
+
+    yoy_asset_growth:
+      threshold_ratio: 3.0
+
+    foreign_cash_jump:
+      threshold_uah: 200000
+
+    cr5_asset_vs_income_growth:
+      high_asset_growth: 0.5
+      high_income_growth_max: 0.1
+      medium_asset_growth: 0.2
+      medium_income_growth_max: 0.0
+      base_weight: 5.0
+      confidence_high: 0.9
+      confidence_medium: 0.8
+
+    br2_unknown_share_growth:
+      delta_threshold: 0.3
+      current_threshold: 0.5
+      base_weight: 2.0
+      confidence: 0.9
+
+    br4_role_change_wealth_jump:
+      high_asset_growth: 1.0
+      medium_asset_growth: 0.5
+      base_weight: 2.0
+      confidence_high: 0.8
+      confidence_medium: 0.7
+
+    cr14_asset_appearance_disappearance:
+      appearance_value_min: 1000000
+      appearance_one_off_fraction: 0.5
+      disappearance_value_min: 1000000
+      disappearance_one_off_income_min: 300000
+      base_weight: 5.0
+      confidence_appearance: 0.8
+      confidence_disappearance: 0.7
+
+    br1_many_corrected:
+      minimum_declarations_per_year: 3
+      base_weight: 2.0
+      confidence: 0.8
+
+    cr15_real_estate_income_3y:
+      minimum_snapshots: 3
+      trigger_ratio: 15.0
+      base_weight: 4.0
+      confidence: 0.8
+
+    cr16_cohort_outliers:
+      minimum_samples: 5
+      income_percentile_high: 0.99
+      assets_percentile_high: 0.99
+      assets_percentile_medium: 0.95
+      cash_percentile_high: 0.99
+      cash_fx_share_min: 0.5
+      confidential_min_samples: 5
+      confidential_ratio_multiplier: 2.0
+      confidential_ratio_high_multiplier: 3.0
+      base_weight: 3.0
+      confidence: 0.8

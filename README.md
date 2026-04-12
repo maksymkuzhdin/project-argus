@@ -33,8 +33,9 @@ docker compose up --build -d
 
 # 4. Verify
 curl http://localhost:8000/health   # → {"status":"ok"}
-open http://localhost:3000          # Next.js frontend
 ```
+
+Then open `http://localhost:3000` in your browser.
 
 To stop everything:
 
@@ -159,14 +160,14 @@ python scripts/run_refresh_cycle.py \
 
 ## Testing
 
-### Backend API Tests
+### Backend Tests
 
 ```bash
 cd backend
 pytest app/tests -q
 ```
 
-Includes unit tests for cash classification, income parsing, ML scoring, API endpoint integration, and database query paths. **155 tests** covering normalization, features, scoring, and API contracts.
+Includes normalization, features, scoring, API contract, and DB integration coverage.
 
 ### Frontend Quality & E2E Tests
 
@@ -182,7 +183,12 @@ E2E smoke tests exercise three key user journeys:
 2. **Declaration Detail**: View scores, rules, anomalies
 3. **Person Timeline**: Multi-year changes and deltas
 
-Tests are run automatically in CI (see `.github/workflows/ci.yml`) after backend tests pass.
+CI enforces an explicit frontend gate:
+1. `npm run lint`
+2. `npm run build`
+3. `npm run e2e` (runs only after backend tests and frontend quality checks pass)
+
+For stable smoke coverage, CI executes Playwright on deterministic Chromium-only settings and uploads the `playwright-report` artifact for failure diagnosis.
 
 ---
 
@@ -200,7 +206,18 @@ argus/
   /scripts        — CLI entry-point scripts
 ```
 
-See [project_argus_consolidated_plan.md](../project_argus_consolidated_plan.md) for the full architecture and roadmap.
+See [docs/roadmap.md](docs/roadmap.md) for current implementation milestones and status.
+
+## Contributor Docs Map
+
+- Setup and local run flow: [QUICKSTART.md](QUICKSTART.md)
+- Ingestion operations: [docs/ingestion-runbook.md](docs/ingestion-runbook.md)
+- Scoring behavior and rule status: [docs/scoring-methodology.md](docs/scoring-methodology.md)
+- API contract notes: [docs/api-notes.md](docs/api-notes.md)
+- Release process: [docs/release-checklist.md](docs/release-checklist.md)
+- Deployment and rollback: [docs/deployment-runbook.md](docs/deployment-runbook.md)
+- Legal language and product guardrails: [docs/legal-guardrails.md](docs/legal-guardrails.md)
+- Implementation status: [docs/roadmap.md](docs/roadmap.md)
 
 ---
 
