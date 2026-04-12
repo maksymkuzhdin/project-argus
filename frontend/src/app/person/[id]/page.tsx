@@ -89,14 +89,14 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
             <ul className="mt-4 text-sm text-zinc-300 space-y-2">
               {data.timeline_score.triggered_rules.map((rule) => {
                 const detail = data.timeline_score.rule_details?.find(
-                  (rd) => rd.rule_name === rule
+                  (d) => d.rule_name === rule && d.triggered
                 );
                 return (
                   <li key={rule} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2">
-                    <div className="font-medium">{rule}</div>
-                    {detail?.explanation && (
-                      <div className="text-zinc-500 text-xs mt-0.5">{detail.explanation}</div>
-                    )}
+                    <span className="font-medium">{rule}</span>
+                    {detail?.explanation ? (
+                      <p className="mt-1 text-xs text-zinc-500">{detail.explanation}</p>
+                    ) : null}
                   </li>
                 );
               })}
@@ -221,6 +221,18 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
                     {" | "}
                     Disappeared: <span className="text-zinc-200 font-mono">{chg.major_assets_disappeared}</span>
                   </div>
+                  {chg.real_estate_3yr_ratio != null && (
+                    <div className="mt-1 text-zinc-500 text-xs">
+                      Real estate (3yr ratio):{" "}
+                      <span className="text-zinc-300 font-mono">
+                        {chg.real_estate_3yr_ratio.toFixed(2)}x
+                      </span>
+                      {"  |  "}
+                      {formatMoney(chg.real_estate_value_prev ?? null)}
+                      {" → "}
+                      {formatMoney(chg.real_estate_value_curr ?? null)}
+                    </div>
+                  )}
                   <div className="mt-1 text-zinc-500 text-xs">
                     Max appeared value: {formatMoney(chg.max_appeared_value)}
                     {" | "}
@@ -228,20 +240,6 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
                     {" | "}
                     One-off income (current year): {formatMoney(chg.one_off_income_curr)}
                   </div>
-                  {chg.real_estate_3yr_ratio != null && (
-                    <div className="mt-2 text-zinc-500 text-xs">
-                      <span className="text-zinc-400">Real estate (3yr ratio):</span>{" "}
-                      <span className="font-mono">{chg.real_estate_3yr_ratio.toFixed(1)}x</span>
-                      {(chg.real_estate_value_prev != null || chg.real_estate_value_curr != null) && (
-                        <span>
-                          {" — Prev: "}
-                          <span className="font-mono">{formatMoney(chg.real_estate_value_prev ?? null)}</span>
-                          {" → Curr: "}
-                          <span className="font-mono">{formatMoney(chg.real_estate_value_curr ?? null)}</span>
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
