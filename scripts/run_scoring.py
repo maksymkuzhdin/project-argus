@@ -26,6 +26,32 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger(__name__)
 
 
+# Load TaxonomyNormalizer once at startup (lazy, cached)
+_normalizer = None
+
+
+def _get_normalizer():
+    """Lazy-load TaxonomyNormalizer for performance."""
+    global _normalizer
+    if _normalizer is None:
+        try:
+            from app.scoring.cohort_taxonomy import create_normalizer_from_config
+            from pathlib import Path
+
+            yaml_path = str(
+                Path(__file__).resolve().parent.parent
+                / "backend"
+                / "app"
+                / "scoring"
+                / "cohort_taxonomy.yaml"
+            )
+            _normalizer = create_normalizer_from_config(yaml_path)
+        except Exception as e:
+            logger.warning(f"Failed to load TaxonomyNormalizer: {e}")
+            _normalizer = False  # Mark as tried but failed
+    return _normalizer if _normalizer is not False else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Score raw declarations.")
     parser.add_argument(
@@ -112,6 +138,61 @@ def main() -> None:
         features = full.get("features", {})
         total_income = features.get("total_income")
         total_assets = features.get("total_assets")
+        
+        # 3a-3b. Normalize using TaxonomyNormalizer with fallback handling (3d)
+        bio = full.get("bio", {})
+        sector = "other"
+        government_level = "other"
+        role_family = "other"
+        role_family_confidence = 0.0
+        institution_family = "unknown"
+        institution_family_confidence = 0.0
+        
+        normalizer = _get_normalizer()
+        if normalizer:
+            try:
+                # Extract work/post fields
+                work_post = bio.get("work_post", "")
+                work_place = bio.get("work_place", "")
+                post_type_raw = features.get("post_type", "")
+                post_category = bio.get("post_category", "")
+                
+                # Normalize
+                norm = normalizer.normalize(
+                    work_post=work_post,
+                    work_place=work_place,
+                    post_type=post_type_raw,
+                    post_category=post_category,
+                )
+                
+                # Extract normalized fields only if confidence >= 0.5
+                if norm.role_family_confidence >= 0.5:
+                    role_family = norm.role_family
+                    role_family_confidence = norm.role_family_confidence
+                else:
+                    logger.warning(
+                        f"Low confidence role mapping for '{work_post}' "
+                        f"(confidence={norm.role_family_confidence})"
+                    )
+                
+                sector = norm.sector
+                government_level = norm.government_level
+                
+                if norm.institution_family_confidence >= 0.5:
+                    institution_family = norm.institution_family
+                    institution_family_confidence = norm.institution_family_confidence
+                else:
+                    logger.warning(
+                        f"Low confidence institution mapping for '{work_place}' "
+                        f"(confidence={norm.institution_family_confidence})"
+                    )
+                
+            except Exception as e:
+                logger.warning(
+                    f"Taxonomy normalization failed for {full.get('declaration_id', 'unknown')}: {e}"
+                )
+                # Fall back to defaults already set above
+        
         cohort_summaries.append(
             {
                 "post_type": features.get("post_type"),
@@ -120,6 +201,14 @@ def main() -> None:
                 "total_assets": float(Decimal(str(total_assets))) if total_assets else None,
                 "cash_ratio": features.get("cash_ratio"),
                 "confidential_ratio": features.get("confidential_ratio"),
+                "sector": sector,
+                "government_level": government_level,
+                "role_family": role_family,
+                "role_family_confidence": role_family_confidence,
+                "institution_family": institution_family,
+                "institution_family_confidence": institution_family_confidence,
+                "year": full.get("declaration_year"),
+                "primary_region": bio.get("region"),
             }
         )
 

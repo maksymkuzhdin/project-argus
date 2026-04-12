@@ -228,3 +228,61 @@ def infer_anomaly(
         percentile=round(percentile, 4),
         top_deviations=top,
     )
+
+
+
+def normalize_cohort(
+    *,
+    work_post: str,
+    work_place: str | None,
+    source_name: str | None,
+    post_type: str | None,
+    post_category: str | None = None,
+    normalizer: Any | None = None,
+) -> dict[str, Any]:
+    """Normalize a declaration record into enriched cohort dimensions.
+    
+    Uses TaxonomyNormalizer to classify institution, role family, sector, and government level.
+    Falls back to basic classification if normalizer not available.
+    
+    Args:
+        work_post: Raw job title
+        work_place: Raw workplace/organization name
+        source_name: Raw source name (currently unused, reserved for future use)
+        post_type: Post type field for sector/government level mapping
+        post_category: Job category (e.g., категорія)
+        normalizer: TaxonomyNormalizer instance (optional)
+    
+    Returns:
+        dict with keys: role_family, institution_type, sector,
+                       government_level, confidence, and raw values
+    """
+    if normalizer is None:
+        # Fallback to minimal classification when normalizer not available
+        return {
+            "role_family": "unknown",
+            "institution_type": "unknown",
+            "sector": "unknown",
+            "government_level": "unknown",
+            "confidence": 0.0,
+            "work_place": work_place,
+        }
+    
+    # Use TaxonomyNormalizer.normalize() to get all normalized fields
+    result = normalizer.normalize(
+        work_post=work_post,
+        work_place=work_place or "",
+        post_type=post_type,
+        post_category=post_category,
+    )
+    
+    return {
+        "role_family": result.role_family,
+        "institution_type": result.institution_family,
+        "sector": result.sector,
+        "government_level": result.government_level,
+        "confidence": result.role_family_confidence * result.institution_family_confidence,
+        "work_place": work_place,
+        "work_post": work_post,
+        "post_type": post_type,
+    }

@@ -266,25 +266,269 @@ def cohort_wealth_outlier(
     )
 
 
+def cohort_cash_ratio_outlier(
+    cash_ratio: float | None,
+    cohort: CohortStats | None,
+    *,
+    threshold_percentile: float = 0.90,
+) -> CohortRuleResult:
+    """Flag declarants whose cash ratio is far above their cohort peers.
+
+    Parameters
+    ----------
+    cash_ratio:
+        Ratio of cash to (cash + bank deposits).
+    threshold_percentile:
+        Percentile above which the ratio is flagged (default 90th).
+    """
+    rule = "cohort_cash_ratio_outlier"
+
+    if cash_ratio is None or cohort is None or len(cohort.cash_ratios) < 5:
+        return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
+
+    ratio = float(cash_ratio)
+    pct = compute_percentile_rank(ratio, cohort.cash_ratios)
+    p90 = get_percentile_value(cohort.cash_ratios, threshold_percentile)
+
+    if pct >= threshold_percentile:
+        # Score scales from 0 at P90 to 1.0 at P99+
+        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+        return CohortRuleResult(
+            rule, round(score, 3), True,
+            f"Cash ratio ({ratio:.1%}) at {pct:.0%} percentile "
+            f"of cohort peers (P90 = {p90:.1%}).",
+            percentile=round(pct, 3),
+        )
+
+    return CohortRuleResult(
+        rule, 0.0, False,
+        f"Cash ratio at {pct:.0%} percentile of cohort peers.",
+        percentile=round(pct, 3),
+    )
+
+
+def cohort_confidential_ratio_outlier(
+    confidential_ratio: float | None,
+    cohort: CohortStats | None,
+    *,
+    threshold_percentile: float = 0.85,
+) -> CohortRuleResult:
+    """Flag declarants whose confidential_ratio is far above their cohort peers.
+
+    Parameters
+    ----------
+    confidential_ratio:
+        Share of value fields marked as confidential or redacted.
+    threshold_percentile:
+        Percentile above which the ratio is flagged (default 85th).
+    """
+    rule = "cohort_confidential_ratio_outlier"
+
+    if confidential_ratio is None or cohort is None or len(cohort.confidential_ratios) < 5:
+        return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
+
+    ratio = float(confidential_ratio)
+    pct = compute_percentile_rank(ratio, cohort.confidential_ratios)
+    p85 = get_percentile_value(cohort.confidential_ratios, threshold_percentile)
+
+    if pct >= threshold_percentile:
+        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+        return CohortRuleResult(
+            rule, round(score, 3), True,
+            f"Confidential density ({ratio:.1%}) at {pct:.0%} percentile "
+            f"of cohort peers (P85 = {p85:.1%}).",
+            percentile=round(pct, 3),
+        )
+
+    return CohortRuleResult(
+        rule, 0.0, False,
+        f"Confidential density at {pct:.0%} percentile of cohort peers.",
+        percentile=round(pct, 3),
+    )
+
+
+def cohort_dwelling_area_outlier(
+    dwelling_area_m2: float | None,
+    cohort: CohortStats | None,
+    *,
+    threshold_percentile: float = 0.95,
+) -> CohortRuleResult:
+    """Flag declarants whose dwelling area is far above their cohort peers.
+
+    Parameters
+    ----------
+    dwelling_area_m2:
+        Total housing area in square meters.
+    threshold_percentile:
+        Percentile above which the area is flagged (default 95th).
+    """
+    rule = "cohort_dwelling_area_outlier"
+
+    if dwelling_area_m2 is None or cohort is None or len(cohort.dwelling_areas) < 5:
+        return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
+
+    area = float(dwelling_area_m2)
+    pct = compute_percentile_rank(area, cohort.dwelling_areas)
+    p95 = get_percentile_value(cohort.dwelling_areas, threshold_percentile)
+
+    if pct >= threshold_percentile:
+        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+        return CohortRuleResult(
+            rule, round(score, 3), True,
+            f"Dwelling area ({area:.0f} m²) at {pct:.0%} percentile "
+            f"of cohort peers (P95 = {p95:.0f} m²).",
+            percentile=round(pct, 3),
+        )
+
+    return CohortRuleResult(
+        rule, 0.0, False,
+        f"Dwelling area at {pct:.0%} percentile of cohort peers.",
+        percentile=round(pct, 3),
+    )
+
+
+def cohort_agri_area_outlier(
+    agri_area_m2: float | None,
+    cohort: CohortStats | None,
+    *,
+    threshold_percentile: float = 0.95,
+) -> CohortRuleResult:
+    """Flag declarants whose agricultural area is far above their cohort peers.
+
+    Parameters
+    ----------
+    agri_area_m2:
+        Total agricultural area in square meters.
+    threshold_percentile:
+        Percentile above which the area is flagged (default 95th).
+    """
+    rule = "cohort_agri_area_outlier"
+
+    if agri_area_m2 is None or cohort is None or len(cohort.agri_areas) < 5:
+        return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
+
+    area = float(agri_area_m2)
+    pct = compute_percentile_rank(area, cohort.agri_areas)
+    p95 = get_percentile_value(cohort.agri_areas, threshold_percentile)
+
+    if pct >= threshold_percentile:
+        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+        return CohortRuleResult(
+            rule, round(score, 3), True,
+            f"Agricultural area ({area:.0f} m²) at {pct:.0%} percentile "
+            f"of cohort peers (P95 = {p95:.0f} m²).",
+            percentile=round(pct, 3),
+        )
+
+    return CohortRuleResult(
+        rule, 0.0, False,
+        f"Agricultural area at {pct:.0%} percentile of cohort peers.",
+        percentile=round(pct, 3),
+    )
+
 # ---------------------------------------------------------------------------
 # Combined Layer 2 scorer
 # ---------------------------------------------------------------------------
 
 def score_declaration_l2(
     *,
-    total_income: float | Decimal | None,
-    total_assets: float | Decimal | None,
-    cohort: CohortStats | None,
+    total_income: float | Decimal | None = None,
+    total_assets: float | Decimal | None = None,
+    cash_ratio: float | None = None,
+    confidential_ratio: float | None = None,
+    dwelling_area_m2: float | None = None,
+    agri_area_m2: float | None = None,
+    cohort: CohortStats | None = None,  # Deprecated fallback for backward compatibility
+    # Multi-dimensional cohort support (Task 4a)
+    year: int | None = None,
+    sector: str | None = None,
+    government_level: str | None = None,
+    primary_region: str | None = None,
+    cohort_resolver: "CohortFallbackResolver | None" = None,
 ) -> list[CohortRuleResult]:
-    """Run all Layer 2 (cohort) scoring rules.
+    """Run all Layer 2 (cohort) scoring rules with optional multi-dimensional support.
 
-    Returns a list of rule results.  The caller is responsible for
-    combining with Layer 1 scores.
+    If cohort_resolver is provided, uses multi-dimensional cohorts with fallback chain.
+    Otherwise, falls back to the legacy `cohort` parameter (deprecated).
+
+    Parameters
+    ----------
+    total_income, total_assets, cash_ratio, confidential_ratio, dwelling_area_m2, agri_area_m2:
+        Feature values to score.
+    cohort:
+        Deprecated. Legacy single CohortStats object.
+    year, sector, government_level, primary_region:
+        Cohort dimensions. Used with cohort_resolver.
+    cohort_resolver:
+        Optional CohortFallbackResolver for multi-dimensional cohort selection.
+
+    Returns
+    -------
+    List of CohortRuleResult objects.
     """
-    return [
-        cohort_income_outlier(total_income, cohort),
-        cohort_wealth_outlier(total_assets, cohort),
-    ]
+    results = []
+    
+    # Determine which cohort to use for income/assets
+    income_assets_cohort = None
+    income_assets_key = None
+    if cohort_resolver and year and sector and government_level:
+        # Use multi-dimensional resolver (Task 4b)
+        income_assets_key, _ = cohort_resolver.resolve_for_income_assets(
+            year, sector, government_level
+        )
+        if income_assets_key:
+            income_assets_cohort = cohort_resolver.get_cohort(income_assets_key)
+    else:
+        # Fall back to legacy cohort parameter
+        income_assets_cohort = cohort
+    
+    # Determine which cohort to use for area features (region-sensitive)
+    area_cohort = None
+    area_key = None
+    if cohort_resolver and year and sector and government_level:
+        # Use region-sensitive resolution (Task 4b)
+        area_key, _ = cohort_resolver.resolve_for_area(
+            year, sector, government_level, primary_region
+        )
+        if area_key:
+            area_cohort = cohort_resolver.get_cohort(area_key)
+    else:
+        area_cohort = cohort
+    
+    # Task 4c: Run all rules with optional cohort keys in explanation (4d)
+    income_rule = cohort_income_outlier(total_income, income_assets_cohort)
+    if income_assets_key and income_rule.triggered:
+        # Append cohort key info to explanation
+        income_rule.explanation += f" [cohort: {income_assets_key}]"
+    results.append(income_rule)
+    
+    wealth_rule = cohort_wealth_outlier(total_assets, income_assets_cohort)
+    if income_assets_key and wealth_rule.triggered:
+        wealth_rule.explanation += f" [cohort: {income_assets_key}]"
+    results.append(wealth_rule)
+    
+    # New rules
+    cash_rule = cohort_cash_ratio_outlier(cash_ratio, income_assets_cohort)
+    if income_assets_key and cash_rule.triggered:
+        cash_rule.explanation += f" [cohort: {income_assets_key}]"
+    results.append(cash_rule)
+    
+    conf_rule = cohort_confidential_ratio_outlier(confidential_ratio, income_assets_cohort)
+    if income_assets_key and conf_rule.triggered:
+        conf_rule.explanation += f" [cohort: {income_assets_key}]"
+    results.append(conf_rule)
+    
+    dwelling_rule = cohort_dwelling_area_outlier(dwelling_area_m2, area_cohort)
+    if area_key and dwelling_rule.triggered:
+        dwelling_rule.explanation += f" [cohort: {area_key}]"
+    results.append(dwelling_rule)
+    
+    agri_rule = cohort_agri_area_outlier(agri_area_m2, area_cohort)
+    if area_key and agri_rule.triggered:
+        agri_rule.explanation += f" [cohort: {area_key}]"
+    results.append(agri_rule)
+    
+    return results
 
 
 # ============================================================================
