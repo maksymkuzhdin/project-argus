@@ -7,11 +7,21 @@ receive ``None`` and can continue with deterministic scoring only.
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import pickle
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from scripts.train_layer3 import FEATURE_NAMES  # type: ignore[import-not-found]
+from app.config import settings
 
 
 @dataclass
@@ -25,6 +35,12 @@ class Layer3Result:
 
 
 _MODEL_CACHE: dict[str, tuple[float, Any]] = {}
+_REGISTRY_SINGLETON: dict[str, Any] | None = None
+_REGISTRY_MODEL_DIR: Path | None = None
+_REGISTRY_MTIME: float | None = None
+_REGISTRY_MISSING_WARNED: set[str] = set()
+
+logger = logging.getLogger(__name__)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -56,6 +72,14 @@ def build_feature_vector(
     vehicles_count: int,
     monetary_count: int,
     confidential_ratio: float,
+    income_yoy_delta_pct: float = 0.0,
+    assets_yoy_delta_pct: float = 0.0,
+    cash_ratio_yoy_delta: float = 0.0,
+    confidential_ratio_yoy_delta: float = 0.0,
+    asset_income_ratio_delta: float = 0.0,
+    new_property_count: float = 0.0,
+    dropped_property_count: float = 0.0,
+    max_single_asset_jump_pct: float = 0.0,
 ) -> dict[str, float]:
     """Build a stable numeric feature map for Layer 3 inference."""
     income = max(0.0, _to_float(total_income))
@@ -81,7 +105,7 @@ def build_feature_vector(
     cash_ratio = (cash / (cash + bank)) if (cash + bank) > 0 else 0.0
     asset_income_ratio = (assets / income) if income > 0 else (10.0 if assets > 0 else 0.0)
 
-    return {
+    feature_map = {
         "total_income": income,
         "total_assets": assets,
         "cash_holdings": cash,
@@ -97,7 +121,30 @@ def build_feature_vector(
         "vehicles_count": float(max(0, vehicles_count)),
         "monetary_count": float(max(0, monetary_count)),
         "declaration_year": float(declaration_year or 0),
+        "income_yoy_delta_pct": float(income_yoy_delta_pct),
+        "assets_yoy_delta_pct": float(assets_yoy_delta_pct),
+        "cash_ratio_yoy_delta": float(cash_ratio_yoy_delta),
+        "confidential_ratio_yoy_delta": float(confidential_ratio_yoy_delta),
+        "asset_income_ratio_delta": float(asset_income_ratio_delta),
+        "new_property_count": float(new_property_count),
+        "dropped_property_count": float(dropped_property_count),
+        "max_single_asset_jump_pct": float(max_single_asset_jump_pct),
     }
+    return {name: float(feature_map.get(name, 0.0)) for name in FEATURE_NAMES}
+
+
+def _slug(value: str | None) -> str:
+    raw = (value or "other").strip().lower()
+    out = []
+    for ch in raw:
+        if ch.isalnum():
+            out.append(ch)
+        else:
+            out.append("_")
+    slug = "".join(out).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "other"
 
 
 def _load_model(model_path: str) -> Any | None:
@@ -116,6 +163,163 @@ def _load_model(model_path: str) -> Any | None:
 
     _MODEL_CACHE[str(p)] = (mtime, artifact)
     return artifact
+
+
+def _model_dir_from_path(model_path: str) -> Path:
+    raw = Path(model_path)
+    if raw.suffix.lower() == ".pkl":
+        return raw.parent
+    return raw
+
+
+def _load_registry_singleton(model_dir: Path) -> dict[str, Any] | None:
+    global _REGISTRY_SINGLETON, _REGISTRY_MODEL_DIR, _REGISTRY_MTIME
+
+    registry_path = model_dir / "layer3_registry.json"
+    cache_valid = (
+        _REGISTRY_MODEL_DIR == model_dir
+        and _REGISTRY_SINGLETON is not None
+        and registry_path.exists()
+    )
+    if cache_valid:
+        try:
+            mtime = registry_path.stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime is not None and _REGISTRY_MTIME == mtime:
+            return _REGISTRY_SINGLETON
+
+    if not registry_path.exists():
+        key = str(registry_path)
+        if key not in _REGISTRY_MISSING_WARNED:
+            logger.warning(
+                "Layer 3 registry not found at %s; falling back to legacy single-model behavior.",
+                registry_path,
+            )
+            _REGISTRY_MISSING_WARNED.add(key)
+        _REGISTRY_SINGLETON = None
+        _REGISTRY_MODEL_DIR = model_dir
+        _REGISTRY_MTIME = None
+        return None
+
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        if not isinstance(registry, dict):
+            raise ValueError("Registry content must be a JSON object")
+    except Exception as exc:
+        logger.warning(
+            "Failed to load Layer 3 registry at %s (%s); using legacy single-model behavior.",
+            registry_path,
+            exc,
+        )
+        _REGISTRY_SINGLETON = None
+        _REGISTRY_MODEL_DIR = model_dir
+        _REGISTRY_MTIME = None
+        return None
+
+    _REGISTRY_SINGLETON = registry
+    _REGISTRY_MODEL_DIR = model_dir
+    _REGISTRY_MTIME = registry_path.stat().st_mtime
+    return registry
+
+
+def _resolve_model_from_path(
+    *,
+    model_path: str,
+    sector: str | None,
+    government_level: str | None,
+) -> Any | None:
+    base = Path(model_path)
+
+    if base.is_file() and base.suffix.lower() == ".pkl":
+        logger.info("Layer 3 model selected: %s (legacy single-model)", base.name)
+        return _load_model(str(base))
+
+    model_dir = _model_dir_from_path(model_path)
+    registry = _load_registry_singleton(model_dir)
+
+    # Backward compatibility: no registry means use model_path exactly as before.
+    if registry is None:
+        legacy_path = Path(model_path)
+        if legacy_path.exists() and legacy_path.is_file():
+            logger.info("Layer 3 model selected: %s (legacy single-model fallback)", legacy_path.name)
+            return _load_model(str(legacy_path))
+        return None
+
+    cohort_key = f"{_slug(sector)}_{_slug(government_level)}"
+    fallback_used = False
+    selected_path: Path | None = None
+
+    cohorts = registry.get("cohorts") if isinstance(registry, dict) else None
+    if isinstance(cohorts, dict):
+        entry = cohorts.get(cohort_key)
+        if isinstance(entry, dict):
+            rel = entry.get("path")
+            if isinstance(rel, str):
+                candidate = model_dir / rel
+                if candidate.exists():
+                    selected_path = candidate
+
+    if selected_path is None:
+        fallback_used = True
+        global_info = registry.get("global") if isinstance(registry, dict) else None
+        if isinstance(global_info, dict):
+            rel = global_info.get("path")
+            if isinstance(rel, str):
+                candidate = model_dir / rel
+                if candidate.exists():
+                    selected_path = candidate
+
+    if selected_path is None:
+        fallback_used = True
+        fallback = model_dir / "layer3_global.pkl"
+        if fallback.exists():
+            selected_path = fallback
+
+    if selected_path is None:
+        logger.warning(
+            "Layer 3 model resolution failed for cohort=%s (sector=%s, government_level=%s).",
+            cohort_key,
+            sector,
+            government_level,
+        )
+        return None
+
+    logger.info(
+        "Layer 3 model selected: %s | cohort=%s | fallback=%s",
+        selected_path.name,
+        cohort_key,
+        fallback_used,
+    )
+    return _load_model(str(selected_path))
+
+
+def resolve_model(sector: str | None, government_level: str | None) -> Any | None:
+    """Resolve and load the best Layer 3 model using configured model path + registry.
+
+    Prefers cohort-specific models and falls back to global when needed.
+    """
+    configured_path = str(getattr(settings, "layer3_model_path", "") or "").strip()
+    if not configured_path:
+        return None
+    return _resolve_model_from_path(
+        model_path=configured_path,
+        sector=sector,
+        government_level=government_level,
+    )
+
+
+def _prime_registry_cache() -> None:
+    configured_path = str(getattr(settings, "layer3_model_path", "") or "").strip()
+    if not configured_path:
+        return
+    p = Path(configured_path)
+    if p.suffix.lower() == ".pkl":
+        return
+    _load_registry_singleton(_model_dir_from_path(configured_path))
+
+
+_prime_registry_cache()
 
 
 def _sigmoid(x: float) -> float:
@@ -157,6 +361,8 @@ def infer_anomaly(
     *,
     feature_map: dict[str, float],
     model_path: str,
+    sector: str | None = None,
+    government_level: str | None = None,
 ) -> Layer3Result | None:
     """Run inference against a serialized Isolation Forest artifact.
 
@@ -166,33 +372,53 @@ def infer_anomaly(
     - decision_min, decision_max: optional calibration bounds
     - robust_medians, robust_scales: optional explainability metadata
     """
-    artifact = _load_model(model_path)
+    configured_path = str(getattr(settings, "layer3_model_path", "") or "")
+    chosen_model_path = str(model_path or configured_path)
+    if chosen_model_path == configured_path:
+        artifact = resolve_model(sector, government_level)
+    else:
+        artifact = _resolve_model_from_path(
+            model_path=chosen_model_path,
+            sector=sector,
+            government_level=government_level,
+        )
     if artifact is None:
         return None
 
     if not isinstance(artifact, dict):
         # Support direct pickled estimator with implicit feature ordering.
         model = artifact
-        feature_order = sorted(feature_map.keys())
+        feature_order = list(FEATURE_NAMES)
         decision_min = None
         decision_max = None
         medians = None
         scales = None
     else:
         model = artifact.get("model")
-        feature_order = artifact.get("feature_order") or sorted(feature_map.keys())
+        feature_order = artifact.get("feature_order") or list(FEATURE_NAMES)
         decision_min = artifact.get("decision_min")
         decision_max = artifact.get("decision_max")
         medians = artifact.get("robust_medians")
         scales = artifact.get("robust_scales")
 
+    # New artifacts store the sklearn Pipeline directly.
+    if not isinstance(artifact, dict):
+        try:
+            scaler = getattr(artifact, "named_steps", {}).get("scaler")
+            medians = list(getattr(scaler, "center_", [])) if scaler is not None else None
+            scales = list(getattr(scaler, "scale_", [])) if scaler is not None else None
+        except Exception:
+            medians = None
+            scales = None
+
     if model is None or not hasattr(model, "decision_function"):
         return None
 
     vector = [float(feature_map.get(name, 0.0)) for name in feature_order]
-
     model_vector = vector
-    if medians and scales and len(medians) == len(vector) and len(scales) == len(vector):
+
+    # Legacy dict artifacts require manual robust normalization.
+    if isinstance(artifact, dict) and medians and scales and len(medians) == len(vector) and len(scales) == len(vector):
         model_vector = []
         for idx in range(len(vector)):
             scale = float(scales[idx]) if scales[idx] not in (None, 0) else 1.0

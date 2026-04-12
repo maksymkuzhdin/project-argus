@@ -1793,6 +1793,8 @@ def score_declaration(
             layer3_result = layer3_inference.infer_anomaly(
                 feature_map=feature_map,
                 model_path=str(getattr(settings, "layer3_model_path", "")),
+                sector=declaration_sector,
+                government_level=declaration_gov_level,
             )
         except Exception:
             layer3_result = None
