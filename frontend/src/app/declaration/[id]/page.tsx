@@ -244,6 +244,9 @@ export default async function DeclarationDetail({
     const scoreBand = getScoreBand(Number(summary.score || 0));
     const recordId = formatField(resolvedParams.id);
     const nazkRecordUrl = `https://public.nazk.gov.ua/documents/${encodeURIComponent(recordId)}`;
+    const confidentialRatio = typeof summary.confidential_ratio === "number"
+        ? `${(summary.confidential_ratio * 100).toFixed(1)}%`
+        : "—";
     const realEstateItems = (data.real_estate as Record<string, unknown>[]) || [];
     const familyMembers = (data.family_members as Record<string, unknown>[]) || [];
     const incomes = (data.incomes as Record<string, unknown>[]) || [];
@@ -257,6 +260,9 @@ export default async function DeclarationDetail({
     const mlAnomalyScore = typeof mlMeta?.anomaly_score === "number" ? mlMeta.anomaly_score : null;
     const mlPercentile = typeof mlMeta?.anomaly_percentile === "number" ? mlMeta.anomaly_percentile : null;
     const mlTopDeviations = Array.isArray(mlMeta?.top_deviations) ? mlMeta.top_deviations : [];
+    const triggeredRuleBadges = Array.isArray(summary.triggered_rules)
+        ? summary.triggered_rules.filter((rule) => typeof rule === "string" && rule.trim())
+        : [];
 
     return (
         <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans p-8">
@@ -317,6 +323,10 @@ export default async function DeclarationDetail({
                             <span className="text-zinc-500">ID</span>
                             <span className="text-zinc-300 font-mono text-xs">{recordId}</span>
                         </div>
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 flex items-center gap-2">
+                            <span className="text-zinc-500">Confidential density</span>
+                            <span className="text-zinc-300 font-medium">{confidentialRatio}</span>
+                        </div>
                         <div className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5">
                             <a
                                 href={nazkRecordUrl}
@@ -342,6 +352,18 @@ export default async function DeclarationDetail({
                                     </svg>
                                     {summary.triggered_rules.length} flags detected
                                 </div>
+                                {triggeredRuleBadges.length > 0 ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        {triggeredRuleBadges.map((rule) => (
+                                            <span
+                                                key={rule}
+                                                className="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-300"
+                                            >
+                                                {rule}
+                                            </span>
+                                        ))}
+                                    </div>
+                                ) : null}
                                 <div className="space-y-3">
                                     {formatField(summary.explanation).split("\n").map((line, i) => (
                                         <div key={i} className="text-zinc-300 bg-zinc-900 rounded p-4 border border-zinc-800/50">

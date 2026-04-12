@@ -1,0 +1,361 @@
+# Ukraine-Specific Cohort Taxonomy Configuration
+#
+# This file contains:
+# 1. Seed institution list for fuzzy matching
+# 2. Keyword mappings for sector and government_level classification
+# 3. Configuration parameters for cohort building
+
+# ============================================================================
+# SEED INSTITUTION LIST
+# ============================================================================
+# Canonical Ukrainian government, public, and major institutions for fuzzy
+# matching against raw work_place, source_name, and organization fields.
+# Each entry includes:
+#   - canonical_name: Official name used in normalized cohorts
+#   - aliases: Common variations, abbreviations, suffixes
+#   - institution_type: Category (judiciary, healthcare, education, local_government, central_government, state_enterprise, law_enforcement, security, defense, media_culture, science, agriculture, unknown)
+#   - edrpou: Optional Ukrainian business ID for validation
+#
+# The institution normalizer will:
+# 1. Try fuzzy matching (edit distance + keyword overlap) to find a seed entry
+# 2. If no match found, extract type from raw name keywords
+# 3. If neither works, record as 'unknown' (for manual review queue)
+
+institutions:
+  # ========== JUDICIARY ==========
+  - canonical_name: "Верховний Суд України"
+    aliases: ["Верховний суд", "ВСУ", "Supreme Court"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  - canonical_name: "Апеляційних судів"
+    aliases: ["Апеляційний суд", "Appeal court"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  - canonical_name: "Окружні адміністративні суди"
+    aliases: ["Адміністративний суд", "Administrative court"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  - canonical_name: "Генеральна прокуратура України"
+    aliases: ["Генпрокуратура", "General Prosecutor", "ГПУ", "GPU"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  - canonical_name: "Прокуратури областей"
+    aliases: ["Обласна прокуратура", "Regional prosecutor"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  - canonical_name: "Національне антикорупційне бюро України"
+    aliases: ["НАБУ", "Anti-corruption bureau", "National Bureau"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  - canonical_name: "Спеціалізована антикорупційна прокуратура"
+    aliases: ["САП", "Specialized anti-corruption"]
+    institution_type: "judiciary"
+    edrpou: ""
+
+  # ========== HEALTHCARE ==========
+  - canonical_name: "Міністерство охорони здоров'я України"
+    aliases: ["МОЗ", "MOZ", "Ministry of health"]
+    institution_type: "healthcare"
+    edrpou: ""
+
+  - canonical_name: "Обласні управління охорони здоров'я"
+    aliases: ["Управління охорони здоров'я", "Regional health authority"]
+    institution_type: "healthcare"
+    edrpou: ""
+
+  - canonical_name: "Лікарні"
+    aliases: ["Лікарня", "Hospital", "Лікувальне закладу"]
+    institution_type: "healthcare"
+    edrpou: ""
+
+  - canonical_name: "Поліклініки"
+    aliases: ["Поліклініка", "Clinic", "Medical clinic"]
+    institution_type: "healthcare"
+    edrpou: ""
+
+  - canonical_name: "Центри первинної медико-санітарної допомоги"
+    aliases: ["ПМСД", "Primary care center"]
+    institution_type: "healthcare"
+    edrpou: ""
+
+  - canonical_name: "Центри комунального здоров'я"
+    aliases: ["Center of public health"]
+    institution_type: "healthcare"
+    edrpou: ""
+
+  # ========== EDUCATION ==========
+  - canonical_name: "Міністерство освіти і науки України"
+    aliases: ["МОН", "MON", "Ministry of education"]
+    institution_type: "education"
+    edrpou: ""
+
+  - canonical_name: "Обласні управління освіти"
+    aliases: ["Управління освіти", "Regional education authority"]
+    institution_type: "education"
+    edrpou: ""
+
+  - canonical_name: "Школи"
+    aliases: ["Школа", "School", "Середня школа", "Гімназія"]
+    institution_type: "education"
+    edrpou: ""
+
+  - canonical_name: "Лічеї"
+    aliases: ["Ліцей", "Lyceum"]
+    institution_type: "education"
+    edrpou: ""
+
+  - canonical_name: "Університети"
+    aliases: ["Univerzity", "University", "Національний университет"]
+    institution_type: "education"
+    edrpou: ""
+
+  - canonical_name: "Технічні коледжі"
+    aliases: ["Коледж", "College", "Училище"]
+    institution_type: "education"
+    edrpou: ""
+
+  # ========== LOCAL GOVERNMENT ==========
+  - canonical_name: "Верховна Рада України"
+    aliases: ["Верховна Рада", "Parliament", "VRU"]
+    institution_type: "central_government"
+    edrpou: ""
+
+  - canonical_name: "Сільські ради"
+    aliases: ["Сільська рада", "Village council"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  - canonical_name: "Селищні ради"
+    aliases: ["Селищна рада", "Municipal council"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  - canonical_name: "Міські ради"
+    aliases: ["Міська рада", "City council", "Urban council"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  - canonical_name: "Районні ради"
+    aliases: ["Районна рада", "District council"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  - canonical_name: "Обласні ради"
+    aliases: ["Обласна рада", "Regional council"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  - canonical_name: "Виконавчі комітети"
+    aliases: ["Виконавчий комітет", "Executive committee"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  - constitutional_name: "Мерії"
+    aliases: ["Мерія", "Mayor's office", "City administration"]
+    institution_type: "local_government"
+    edrpou: ""
+
+  # ========== CENTRAL GOVERNMENT ==========
+  - canonical_name: "Президент України"
+    aliases: ["Офіс Президента", "Presidential office"]
+    institution_type: "central_government"
+    edrpou: ""
+
+  - canonical_name: "Секретаріат Уряду"
+    aliases: ["Government office", "Cabinet Secretariat"]
+    institution_type: "central_government"
+    edrpou: ""
+
+  - canonical_name: "Міністерства"
+    aliases: ["Міністерство", "Ministry"]
+    institution_type: "central_government"
+    edrpou: ""
+
+  - canonical_name: "Державна служба України"
+    aliases: ["Civil service"]
+    institution_type: "central_government"
+    edrpou: ""
+
+  # ========== STATE ENTERPRISES ==========
+  - canonical_name: "Укрзалізниця"
+    aliases: ["Ukrainian Railways", "Укрзаліз"]
+    institution_type: "state_enterprise"
+    edrpou: ""
+
+  - canonical_name: "НАК Нафтогаз України"
+    aliases: ["Naftogaz", "Naftogaz Ukraine"]
+    institution_type: "state_enterprise"
+    edrpou: ""
+
+  - canonical_name: "Українська енергетична компанія"
+    aliases: ["UAEC", "Energy company"]
+    institution_type: "state_enterprise"
+    edrpou: ""
+
+  - canonical_name: "Укрпошта"
+    aliases: ["Ukrainian Post", "Укрпошт"]
+    institution_type: "state_enterprise"
+    edrpou: ""
+
+  # ========== LAW ENFORCEMENT & SECURITY ==========
+  - canonical_name: "Національна поліція України"
+    aliases: ["Національна поліція", "National police", "НПУ"]
+    institution_type: "law_enforcement"
+    edrpou: ""
+
+  - canonical_name: "Служба безпеки України"
+    aliases: ["СБУ", "Security Service", "Security Service of Ukraine"]
+    institution_type: "security"
+    edrpou: ""
+
+  - canonical_name: "Міністерство внутрішніх справ"
+    aliases: ["МВС", "MIA", "Ministry of Internal Affairs"]
+    institution_type: "law_enforcement"
+    edrpou: ""
+
+  - canonical_name: "Національна гвардія України"
+    aliases: ["Національна гвардія", "National Guard"]
+    institution_type: "security"
+    edrpou: ""
+
+  - canonical_name: "Граничні служби"
+    aliases: ["Прикордонна служба", "Border guard", "Border service"]
+    institution_type: "law_enforcement"
+    edrpou: ""
+
+  # ========== DEFENSE ==========
+  - canonical_name: "Міністерство оборони України"
+    aliases: ["МО", "MOD", "Ministry of Defense"]
+    institution_type: "defense"
+    edrpou: ""
+
+  - canonical_name: "Генеральний штаб"
+    aliases: ["General staff", "Генеральний Штаб"]
+    institution_type: "defense"
+    edrpou: ""
+
+  - canonical_name: "Збройні Сили України"
+    aliases: ["Armed Forces", "ЗСУ"]
+    institution_type: "defense"
+    edrpou: ""
+
+  # ========== MEDIA & CULTURE ==========
+  - canonical_name: "НТКУ"
+    aliases: ["National Television", "Ukrainian Television"]
+    institution_type: "media_culture"
+    edrpou: ""
+
+  - canonical_name: "УКМК"
+    aliases: ["Ukrainian radio", "Radio Ukraine"]
+    institution_type: "media_culture"
+    edrpou: ""
+
+  - canonical_name: "1+1 Media"
+    aliases: ["1+1"]
+    institution_type: "media_culture"
+    edrpou: ""
+
+  - canonical_name: "Мистецькі установи"
+    aliases: ["Театр", "Museum", "Музей", "Theater"]
+    institution_type: "media_culture"
+    edrpou: ""
+
+  # ========== SCIENCE ==========
+  - canonical_name: "Національна академія наук України"
+    aliases: ["НАН", "National Academy of Sciences"]
+    institution_type: "science"
+    edrpou: ""
+
+  - canonical_name: "Науково-дослідні інститути"
+    aliases: ["Research institute", "НДІ"]
+    institution_type: "science"
+    edrpou: ""
+
+  # ========== AGRICULTURE ==========
+  - canonical_name: "Міністерство аграрної політики"
+    aliases: ["МАП", "Ministry of Agriculture"]
+    institution_type: "agriculture"
+    edrpou: ""
+
+  - canonical_name: "Аграрні установи"
+    aliases: ["Agricultural", "Farm"]
+    institution_type: "agriculture"
+    edrpou: ""
+
+# ============================================================================
+# SECTOR KEYWORD MAPPINGS
+# ============================================================================
+# Map post_type values (from Ukrainian e-declarations) to normalized sectors
+# via keyword matching. Each sector lists Ukrainian keywords that identify it.
+# The mapper will:
+# 1. Split post_type into words
+# 2. Check if any keyword matches (case-insensitive)
+# 3. First match wins (listed in priority order)
+# 4. If no match, sector = "other"
+
+sector_keywords:
+  healthcare:
+    - ["МЕДИК", "ЛІКАР", "ОХОРОНА ЗДОРОВ'Я", "ЗДОРОВ'Я"]
+  judiciary:
+    - ["СУД", "ПРОКУРАТУР", "АДВОКАТ", "СУДД"]
+  education:
+    - ["ОСВІТ", "НАУК", "ШКОЛ", "ВИКЛАДАЧ", "УНИВЕРСИТ"]
+  local_government:
+    - ["МІСЦЕВОМ САМОВРЯД", "РАДА", "МЕРІЯ", "КОМІТЕТ"]
+  central_government:
+    - ["ЦЕНТР", "ДЕРЖАВН", "МІНІСТЕРСТВ", "РЯДОВИ СЛУЖБ"]
+  security_defense:
+    - ["БЕЗПЕК", "ОБОРОН", "ПОЛІЦ", "ВІЙСЬКОВ", "ГВ"]
+  state_enterprise:
+    - ["ПІДПРИЄМСТВ", "КОМУНАЛЬН", "АКЦІОНЕР"]
+  media_culture:
+    - ["МЕДІА", "ТЕЛЕ", "РАДІО", "КУЛЬТУР", "МИСТЕЦ"]
+  science:
+    - ["НАУК", "ДОСЛІД", "ІНСТИТУТ"]
+  agriculture:
+    - ["АГР", "ЗЕМЛ", "СІЛЬСЬК"]
+  # anything else falls through to "other"
+
+# ============================================================================
+# GOVERNMENT LEVEL KEYWORD MAPPINGS
+# ============================================================================
+# Map post_type + post_category to normalized government levels.
+# These keyword lists identify the institutional tier (central vs. local, etc.)
+
+government_level_keywords:
+  local:
+    - ["МІСЦЕВОМ САМОВРЯД", "МІСЦЕВА", "СЕЛИЩ", "СІЛЬСЬК", "РАЙОНН", "ОБЛАСН"]
+  central:
+    - ["ЦЕНТР", "ДЕРЖАВН", "МІНІСТЕРСТВ", "ВЕРХОВН", "ПАРЛАМЕНТ"]
+  state_enterprise:
+    - ["КОМУНАЛЬН", "ДЕРЖАВН ПІДПРИЄМСТВ", "АКЦІОНЕР"]
+  commission:
+    - ["ВЛК", "ЛЛК", "МСЕК", "КОМІСІЯ"]
+  # anything else falls through to "other"
+
+# ============================================================================
+# COHORT BUILDER CONFIGURATION
+# ============================================================================
+
+cohort_configuration:
+  # Minimum number of declarations required for a cohort before fallback
+  min_cohort_size: 30
+  
+  # Confidence threshold for role_family and institution_family normalization
+  # Values below this are flagged for manual review
+  min_mapping_confidence: 0.60
+  
+  # Maximum edit distance (Levenshtein) for institution fuzzy matching
+  max_edit_distance: 5
+  
+  # Minimum overlap score (Jaccard/keyword) for institution matching
+  min_overlap_score: 0.3
+  
+  # URL or path to manual curation notes (for future feature)
+  # manual_curation_file: "output/cohort_mappings_curated.yaml"

@@ -25,6 +25,7 @@ export interface DeclarationSummary {
     real_estate_rights: number;
     total_income: string | null;
     total_assets: string | null;
+    confidential_ratio?: number;
     score: number;
     triggered_rules: string[];
     explanation: string;

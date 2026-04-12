@@ -133,6 +133,34 @@ def _monetary_to_dict(m: MonetaryAsset) -> dict[str, Any]:
     }
 
 
+def _confidential_ratio_from_rows(
+    incomes: list[dict[str, Any]],
+    monetary_assets: list[dict[str, Any]],
+    real_estate: list[dict[str, Any]],
+) -> float:
+    status_fields = (
+        "amount_status",
+        "total_area_status",
+        "cost_assessment_status",
+        "organization_status",
+    )
+    confidential_statuses = {"confidential", "redacted_other"}
+    total = 0
+    confidential = 0
+
+    for rows in (incomes, monetary_assets, real_estate):
+        for row in rows:
+            for sf in status_fields:
+                if sf in row:
+                    total += 1
+                    if str(row.get(sf) or "") in confidential_statuses:
+                        confidential += 1
+
+    if total == 0:
+        return 0.0
+    return confidential / total
+
+
 def _bank_to_dict(b: BankAccount) -> dict[str, Any]:
     return {
         "institution_name": b.institution_name,
@@ -276,6 +304,7 @@ def _ensure_loaded() -> None:
                 "real_estate_rights": len(full["real_estate"]),
                 "total_income": full["features"].get("total_income"),
                 "total_assets": full["features"].get("total_assets"),
+                "confidential_ratio": full["features"].get("confidential_ratio"),
                 "score": score_data["total_score"],
                 "triggered_rules": score_data["triggered_rules"],
                 "explanation": score_data["explanation"],
@@ -468,6 +497,9 @@ def list_declarations(
 
     items = []
     for row in rows:
+        incomes = db.query(IncomeEntry).filter(IncomeEntry.declaration_id == row.declaration_id).all()
+        monetary = db.query(MonetaryAsset).filter(MonetaryAsset.declaration_id == row.declaration_id).all()
+        real_estate = db.query(RealEstateAsset).filter(RealEstateAsset.declaration_id == row.declaration_id).all()
         name = " ".join(
             p for p in [row.lastname, row.firstname, row.middlename] if p
         ) or "Unknown Official"
@@ -482,6 +514,11 @@ def list_declarations(
             "institution": row.work_place or "",
             "total_income": str(row.total_income) if row.total_income else None,
             "total_assets": str(row.total_assets) if row.total_assets else None,
+            "confidential_ratio": _confidential_ratio_from_rows(
+                [_income_to_dict(i) for i in incomes],
+                [_monetary_to_dict(m) for m in monetary],
+                [_real_estate_to_dict(r) for r in real_estate],
+            ),
             "score": float(row.total_score) if row.total_score is not None else 0.0,
             "triggered_rules": triggered,
             "explanation": row.explanation_summary or "No anomaly signals detected.",
@@ -614,6 +651,11 @@ def get_declaration(doc_id: str, db: Session = Depends(get_db)) -> dict[str, Any
         "real_estate_rights": len(real_estate),
         "total_income": str(total_income_val) if total_income_val else None,
         "total_assets": str(total_assets_val) if total_assets_val else None,
+        "confidential_ratio": _confidential_ratio_from_rows(
+            [_income_to_dict(i) for i in incomes],
+            [_monetary_to_dict(m) for m in monetary],
+            [_real_estate_to_dict(r) for r in real_estate],
+        ),
         "score": float(score_row.total_score) if score_row and score_row.total_score else 0.0,
         "triggered_rules": triggered,
         "explanation": score_row.explanation_summary if score_row else "No anomaly signals detected.",

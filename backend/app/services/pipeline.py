@@ -140,6 +140,7 @@ def process_declaration(raw: dict) -> dict:
         "real_estate_rights": len(real_estate),
         "total_income": str(total_income) if total_income else None,
         "total_assets": str(total_assets) if total_assets else None,
+        "confidential_ratio": confidential_ratio,
         "score": result.total_score,
         "triggered_rules": result.triggered_rules,
         "explanation": result.explanation_summary,
@@ -183,6 +184,38 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
     bank_accounts = parse_step_17(clean, family_index)
     incomes = parse_step_11(clean)
     monetary = parse_step_12(clean)
+
+    # 2b. Ukraine-specific cohort taxonomy normalization
+    cohort_taxonomy = None
+    try:
+        from app.scoring.cohort_taxonomy import create_normalizer_from_config
+        from pathlib import Path
+        
+        yaml_path = str(Path(__file__).parent.parent / "scoring" / "cohort_taxonomy.yaml")
+        normalizer = create_normalizer_from_config(yaml_path)
+        
+        # Extract work and post type info
+        work_info = clean.get("work_info", [{}])[0] if clean.get("work_info") else {}
+        work_post = work_info.get("post") or ""
+        work_place = work_info.get("place") or ""
+        
+        # post_type and post_category are dicts with 'value' and 'status' keys
+        post_type_dict = bio.get("post_type", {})
+        post_type = (post_type_dict.get("value") if isinstance(post_type_dict, dict) else post_type_dict) or ""
+        
+        post_category_dict = bio.get("post_category", {})
+        post_category = (post_category_dict.get("value") if isinstance(post_category_dict, dict) else post_category_dict) or ""
+        
+        # Normalize
+        cohort_taxonomy = normalizer.normalize(
+            work_post=work_post,
+            work_place=work_place,
+            post_type=post_type,
+            post_category=post_category,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to normalize cohort taxonomy for {declaration_id}: {e}")
+        cohort_taxonomy = None
 
     # 3. Features
     total_income = compute_total_income(incomes)
@@ -236,6 +269,14 @@ def process_declaration_full(raw: dict, *, cohort_stats: object | None = None) -
         "bank_accounts": bank_accounts,
         "incomes": incomes,
         "monetary": monetary,
+        "cohort_taxonomy": {
+            "role_family": cohort_taxonomy.role_family if cohort_taxonomy else None,
+            "role_family_confidence": cohort_taxonomy.role_family_confidence if cohort_taxonomy else None,
+            "institution_family": cohort_taxonomy.institution_family if cohort_taxonomy else None,
+            "institution_family_confidence": cohort_taxonomy.institution_family_confidence if cohort_taxonomy else None,
+            "sector": cohort_taxonomy.sector if cohort_taxonomy else None,
+            "government_level": cohort_taxonomy.government_level if cohort_taxonomy else None,
+        } if cohort_taxonomy else None,
         "features": {
             "total_income": str(total_income) if total_income else None,
             "total_assets": str(total_assets) if total_assets else None,

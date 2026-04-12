@@ -29,6 +29,10 @@ Then combined into a bounded overall score:
 
 `data_quality_score` is capped to reduce technical-noise dominance.
 
+### Confidential-Value Density
+
+The pipeline also exposes `confidential_ratio`, the share of tracked value fields marked as confidential or redacted. This is not a standalone score, but it is used as a cohort feature for opacity checks and future cohort-aware analysis.
+
 ## Layer 2 Cohort Ensemble
 
 Layer 2 is a cohort-scoped ensemble, not a single global model. The recommended composition is:

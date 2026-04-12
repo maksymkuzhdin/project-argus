@@ -26,15 +26,15 @@ def client():
 
 # A clean state for testing
 MOCK_SUMMARY = [
-    {"id": "test-1", "score": 1.0, "triggered_rules": ["cash_to_bank_ratio"]},
-    {"id": "test-2", "score": 0.5, "triggered_rules": ["unknown_value_frequency"]},
-    {"id": "test-3", "score": 0.0, "triggered_rules": []},
+    {"id": "test-1", "score": 1.0, "triggered_rules": ["cash_to_bank_ratio"], "confidential_ratio": 0.25},
+    {"id": "test-2", "score": 0.5, "triggered_rules": ["unknown_value_frequency"], "confidential_ratio": 0.0},
+    {"id": "test-3", "score": 0.0, "triggered_rules": [], "confidential_ratio": 0.0},
 ]
 
 MOCK_CACHE = {
-    "test-1": {"id": "test-1", "summary": {"score": 1.0}},
-    "test-2": {"id": "test-2", "summary": {"score": 0.5}},
-    "test-3": {"id": "test-3", "summary": {"score": 0.0}},
+    "test-1": {"id": "test-1", "summary": {"score": 1.0, "confidential_ratio": 0.25}},
+    "test-2": {"id": "test-2", "summary": {"score": 0.5, "confidential_ratio": 0.0}},
+    "test-3": {"id": "test-3", "summary": {"score": 0.0, "confidential_ratio": 0.0}},
 }
 
 @pytest.fixture(autouse=True)
@@ -76,6 +76,7 @@ def test_list_declarations(client):
     data = response.json()
     assert data["total"] == 3
     assert len(data["items"]) == 3
+    assert data["items"][0]["confidential_ratio"] == 0.25
 
 
 def test_list_declarations_min_score(client):
@@ -101,7 +102,9 @@ def test_get_stats(client):
 def test_get_declaration_exists(client):
     response = client.get("/api/declarations/test-1")
     assert response.status_code == 200
-    assert response.json()["id"] == "test-1"
+    payload = response.json()
+    assert payload["id"] == "test-1"
+    assert payload["summary"]["confidential_ratio"] == 0.25
 
 
 def test_get_declaration_not_found(client):

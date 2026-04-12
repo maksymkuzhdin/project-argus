@@ -388,3 +388,59 @@ def test_db_path_person_timeline_handles_missing_income_rows() -> None:
         assert "timeline_score" in payload
     finally:
         app.dependency_overrides.clear()
+
+
+def test_db_path_handles_partial_declaration_without_child_rows() -> None:
+    def _seed_partial_declaration(db_session) -> None:
+        db_session.add_all(
+            [
+                DeclarantProfile(
+                    declaration_id="doc-partial-1",
+                    user_declarant_id=991,
+                    declaration_year=2024,
+                    declaration_type=1,
+                    firstname="Partial",
+                    lastname="Case",
+                    work_post="Analyst",
+                    work_place="Regional Office",
+                    post_type="B",
+                ),
+                AnomalyScore(
+                    declaration_id="doc-partial-1",
+                    total_score=Decimal("0.55"),
+                    triggered_rules="unknown_value_frequency",
+                    explanation_summary="Sparse declaration record.",
+                    rule_details_json=json.dumps([]),
+                ),
+            ]
+        )
+
+    client = _make_client_with_extra_seed(_seed_partial_declaration)
+    try:
+        list_response = client.get("/api/declarations?limit=10&sort_by=year&sort_dir=desc")
+        assert list_response.status_code == 200
+        list_payload = list_response.json()
+
+        partial_item = next(
+            item for item in list_payload["items"] if item["declaration_id"] == "doc-partial-1"
+        )
+        assert partial_item["total_income"] is None
+        assert partial_item["total_assets"] is None
+        assert partial_item["confidential_ratio"] == 0.0
+        assert partial_item["score"] == 0.55
+
+        detail_response = client.get("/api/declarations/doc-partial-1")
+        assert detail_response.status_code == 200
+        detail = detail_response.json()
+
+        assert detail["id"] == "doc-partial-1"
+        assert detail["family_members"] == []
+        assert detail["real_estate"] == []
+        assert detail["vehicles"] == []
+        assert detail["bank_accounts"] == []
+        assert detail["incomes"] == []
+        assert detail["monetary"] == []
+        assert detail["summary"]["confidential_ratio"] == 0.0
+        assert detail["summary"]["rule_details"] == []
+    finally:
+        app.dependency_overrides.clear()

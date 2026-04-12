@@ -285,3 +285,257 @@ def score_declaration_l2(
         cohort_income_outlier(total_income, cohort),
         cohort_wealth_outlier(total_assets, cohort),
     ]
+
+
+# ============================================================================
+# Multi-dimensional Cohort Infrastructure (Ukraine-specific taxonomy)
+# ============================================================================
+
+class MultiDimensionalCohortKey(NamedTuple):
+    """Multi-dimensional cohort key with sector, government level, region."""
+    year: int
+    sector: str
+    government_level: str
+    region: str | None = None  # Optional, for area-based features
+
+
+@dataclass
+class AuditTrail:
+    """Track fallback chain usage and normalization confidence."""
+    declarant_id: str
+    original_cohort_key: MultiDimensionalCohortKey
+    used_cohort_key: str  # The key actually used (may have fallen back)
+    reason: str = ""
+    role_family_confidence: float = 1.0
+    institution_family_confidence: float = 1.0
+    feature_type: str = ""  # income, assets, dwelling_area, agri_area, etc.
+
+
+def build_multi_dimensional_cohorts(
+    summaries: list[dict[str, Any]],
+    *,
+    min_cohort_size: int = 30,
+) -> dict[str, CohortStats]:
+    """Build multi-dimensional cohort distributions (sector, government_level, region).
+
+    This extends the basic (post_type, year) cohort building to support
+    new normalized dimensions from TaxonomyNormalizer output.
+
+    Parameters
+    ----------
+    summaries:
+        List of dicts with (at minimum):
+        ``year``, ``sector``, ``government_level``, ``primary_region``,
+        ``total_income``, ``total_assets``, ``cash_ratio``,
+        ``confidential_ratio``, ``dwelling_area_m2``, ``agri_area_m2``
+    min_cohort_size:
+        Cohorts with fewer members are dropped.
+
+    Returns
+    -------
+    Dict mapping cohort key string (e.g., "2024_healthcare_central") to CohortStats.
+    """
+    cohorts: dict[str, CohortStats] = {}
+
+    for s in summaries:
+        year = s.get("year")
+        sector = s.get("sector", "other")
+        govt_level = s.get("government_level", "other")
+        primary_region = s.get("primary_region")
+
+        if not year:
+            continue
+
+        # Build cohort key (without region for income/assets metrics)
+        key_income = f"{year}_{sector}_{govt_level}"
+        if key_income not in cohorts:
+            cohorts[key_income] = CohortStats()
+
+        stats = cohorts[key_income]
+
+        inc = s.get("total_income")
+        if inc is not None:
+            stats.incomes.append(float(inc))
+
+        assets = s.get("total_assets")
+        if assets is not None:
+            stats.assets.append(float(assets))
+
+        cr = s.get("cash_ratio")
+        if cr is not None:
+            stats.cash_ratios.append(float(cr))
+
+        conf = s.get("confidential_ratio")
+        if conf is not None:
+            stats.confidential_ratios.append(float(conf))
+
+        # Area metrics: also regional breakdowns
+        dwelling_area = s.get("dwelling_area_m2") or s.get("dwelling_area")
+        dwelling_f = float(dwelling_area) if dwelling_area is not None else None
+        if dwelling_f is not None:
+            stats.dwelling_areas.append(dwelling_f)
+
+        agri_area = s.get("agri_area_m2") or s.get("agri_area")
+        agri_f = float(agri_area) if agri_area is not None else None
+        if agri_f is not None:
+            stats.agri_areas.append(agri_f)
+
+        # Regional breakdowns for area metrics
+        region = str(primary_region or "").strip().lower()
+        if region:
+            if dwelling_f is not None:
+                stats.dwelling_areas_by_region.setdefault(region, []).append(dwelling_f)
+            if agri_f is not None:
+                stats.agri_areas_by_region.setdefault(region, []).append(agri_f)
+
+    # Freeze (sort) and filter small cohorts
+    result = {}
+    for key, stats in cohorts.items():
+        if stats.size >= min_cohort_size:
+            stats.freeze()
+            result[key] = stats
+        else:
+            logger.debug(
+                "Multi-dimensional cohort %s dropped: only %d members (min %d)",
+                key, stats.size, min_cohort_size,
+            )
+
+    logger.info(
+        "Built %d multi-dimensional cohorts from %d declarations (%d dropped as too small).",
+        len(result), len(summaries), len(cohorts) - len(result),
+    )
+    return result
+
+
+class CohortFallbackResolver:
+    """Resolve cohort keys using fallback hierarchy when cohort is too small.
+
+    Supports two fallback chains:
+      - Income/assets: year+sector+government_level → year+sector → year → global
+      - Area (region-sensitive): year+sector+government_level+region → year+sector+government_level → ...
+    """
+
+    def __init__(self, cohort_stats: dict[str, CohortStats], min_cohort_size: int = 30):
+        """Initialize resolver with built cohorts.
+
+        Parameters
+        ----------
+        cohort_stats:
+            Dict of cohort_key → CohortStats (from build_multi_dimensional_cohorts)
+        min_cohort_size:
+            Threshold for considering a cohort "too small"
+        """
+        self.cohort_stats = cohort_stats
+        self.min_cohort_size = min_cohort_size
+        self.fallback_log: list[AuditTrail] = []
+
+    def resolve_for_income_assets(
+        self,
+        year: int,
+        sector: str,
+        government_level: str,
+    ) -> tuple[str | None, list[str]]:
+        """Resolve cohort key for income/assets features using fallback chain.
+
+        Parameters
+        ----------
+        year, sector, government_level:
+            Cohort dimensions
+
+        Returns
+        -------
+        (selected_cohort_key, fallback_chain)
+            selected_cohort_key: The key to use (or None if no cohort found)
+            fallback_chain: List of keys tried in order
+        """
+        chain = [
+            f"{year}_{sector}_{government_level}",
+            f"{year}_{sector}",
+            f"{year}",
+            "global",
+        ]
+
+        for key in chain:
+            stats = self.cohort_stats.get(key)
+            if stats and stats.size >= self.min_cohort_size:
+                return key, chain
+            # If key is "global", always use it as final fallback even if small
+            if key == "global":
+                return key, chain
+
+        return None, chain
+
+    def resolve_for_area(
+        self,
+        year: int,
+        sector: str,
+        government_level: str,
+        primary_region: str | None = None,
+    ) -> tuple[str | None, list[str]]:
+        """Resolve cohort key for area features using region-sensitive fallback chain.
+
+        Parameters
+        ----------
+        year, sector, government_level, primary_region:
+            Cohort dimensions
+
+        Returns
+        -------
+        (selected_cohort_key, fallback_chain)
+        """
+        chain = []
+        if primary_region and primary_region.strip():
+            region_lower = primary_region.lower().strip()
+            chain.append(f"{year}_{sector}_{government_level}_{region_lower}")
+
+        chain.extend([
+            f"{year}_{sector}_{government_level}",
+            f"{year}_{sector}",
+            f"{year}",
+            "global",
+        ])
+
+        for key in chain:
+            stats = self.cohort_stats.get(key)
+            if stats and stats.size >= self.min_cohort_size:
+                return key, chain
+            if key == "global":
+                return key, chain
+
+        return None, chain
+
+    def get_cohort(self, cohort_key: str) -> CohortStats | None:
+        """Retrieve CohortStats for a given key (including synthetic "global" key)."""
+        if cohort_key == "global":
+            # Return a synthetic global cohort with all data
+            return self._build_global_cohort()
+        return self.cohort_stats.get(cohort_key)
+
+    def _build_global_cohort(self) -> CohortStats | None:
+        """Build synthetic global cohort from all existing cohorts."""
+        if not self.cohort_stats:
+            return None
+
+        global_stats = CohortStats()
+        for stats in self.cohort_stats.values():
+            global_stats.incomes.extend(stats.incomes)
+            global_stats.assets.extend(stats.assets)
+            global_stats.cash_ratios.extend(stats.cash_ratios)
+            global_stats.confidential_ratios.extend(stats.confidential_ratios)
+            global_stats.dwelling_areas.extend(stats.dwelling_areas)
+            global_stats.agri_areas.extend(stats.agri_areas)
+
+            for region, values in stats.dwelling_areas_by_region.items():
+                global_stats.dwelling_areas_by_region.setdefault(region, []).extend(values)
+            for region, values in stats.agri_areas_by_region.items():
+                global_stats.agri_areas_by_region.setdefault(region, []).extend(values)
+
+        if global_stats.size > 0:
+            global_stats.freeze()
+            return global_stats
+
+        return None
+
+    def log_fallback(self, trail: AuditTrail) -> None:
+        """Log a fallback usage for auditing."""
+        self.fallback_log.append(trail)

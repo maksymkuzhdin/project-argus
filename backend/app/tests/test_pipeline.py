@@ -1,4 +1,3 @@
-from decimal import Decimal
 from app.services.pipeline import process_declaration
 
 def test_process_declaration_cash_and_bank_separation():
@@ -84,3 +83,31 @@ def test_process_declaration_cash_heavy():
     # Cash is > 80% of (cash+bank) => 200k / 210k = 95%.
     # Should flag!
     assert "cash_to_bank_ratio" in summary["triggered_rules"]
+
+
+def test_process_declaration_exposes_confidential_ratio():
+    raw = {
+        "id": "doc-456",
+        "data": {
+            "step_12": {
+                "isNotApplicable": 0,
+                "data": [
+                    {
+                        "objectType": "Готівкові кошти",
+                        "sizeAssets": "50000",
+                        "assetsCurrency": "1",
+                    },
+                    {
+                        "objectType": "Готівкові кошти",
+                        "sizeAssets": "[Конфіденційна інформація]",
+                        "assetsCurrency": "1",
+                    },
+                ],
+            },
+        },
+    }
+
+    summary = process_declaration(raw)
+
+    assert "confidential_ratio" in summary
+    assert summary["confidential_ratio"] > 0
