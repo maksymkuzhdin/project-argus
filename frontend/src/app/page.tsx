@@ -213,7 +213,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                     <tr key={decl.declaration_id} className="hover:bg-zinc-800/20 transition-colors" data-testid="declaration-row">
                     <td className="px-6 py-4">
                       <Link
-                        href={`/declaration?id=${decl.declaration_id}&returnTo=${encodeURIComponent(currentDashboardHref)}`}
+                        href={`/declaration/${decl.declaration_id}?returnTo=${encodeURIComponent(currentDashboardHref)}`}
                         className="font-medium text-blue-400 hover:text-blue-300 transition-colors"
                         data-testid={`declaration-link-${decl.declaration_id}`}
                       >
