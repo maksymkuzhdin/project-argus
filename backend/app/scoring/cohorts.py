@@ -699,13 +699,13 @@ class CohortFallbackResolver:
         ]
 
         for key in chain:
-            stats = self.cohort_stats.get(key)
-            if stats and stats.size >= self.min_cohort_size:
+            if key == "global":
                 if key != chain[0]:
                     logger.info("Income/assets cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
-            # If key is "global", always use it as final fallback even if small
-            if key == "global":
+
+            stats = self.cohort_stats.get(key)
+            if stats and stats.size >= self.min_cohort_size:
                 if key != chain[0]:
                     logger.info("Income/assets cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
@@ -743,12 +743,13 @@ class CohortFallbackResolver:
         ])
 
         for key in chain:
-            stats = self.cohort_stats.get(key)
-            if stats and stats.size >= self.min_cohort_size:
+            if key == "global":
                 if key != chain[0]:
                     logger.info("Area cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain
-            if key == "global":
+
+            stats = self.cohort_stats.get(key)
+            if stats and stats.size >= self.min_cohort_size:
                 if key != chain[0]:
                     logger.info("Area cohort fallback: tried %s, used %s", chain[0], key)
                 return key, chain

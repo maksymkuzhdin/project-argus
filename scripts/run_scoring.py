@@ -143,6 +143,30 @@ def main() -> None:
         features = full.get("features", {})
         total_income = features.get("total_income")
         total_assets = features.get("total_assets")
+        dwelling_area_m2 = features.get("dwelling_area_m2")
+        agri_area_m2 = features.get("agri_area_m2")
+
+        if dwelling_area_m2 is None:
+            dwelling_area_m2 = 0.0
+            for row in full.get("real_estate", []):
+                area = row.get("total_area")
+                if area is None:
+                    continue
+                area_f = float(area)
+                obj = str(row.get("object_type") or "").lower()
+                if any(kw in obj for kw in ("кварт", "буд", "жит")):
+                    dwelling_area_m2 += area_f
+
+        if agri_area_m2 is None:
+            agri_area_m2 = 0.0
+            for row in full.get("real_estate", []):
+                area = row.get("total_area")
+                if area is None:
+                    continue
+                area_f = float(area)
+                obj = str(row.get("object_type") or "").lower()
+                if "зем" in obj:
+                    agri_area_m2 += area_f
         
         # 3a-3b. Normalize using TaxonomyNormalizer with fallback handling (3d)
         bio = full.get("bio", {})
@@ -206,6 +230,8 @@ def main() -> None:
                 "total_assets": float(Decimal(str(total_assets))) if total_assets else None,
                 "cash_ratio": features.get("cash_ratio"),
                 "confidential_ratio": features.get("confidential_ratio"),
+                "dwelling_area_m2": dwelling_area_m2,
+                "agri_area_m2": agri_area_m2,
                 "sector": sector,
                 "government_level": government_level,
                 "role_family": role_family,
