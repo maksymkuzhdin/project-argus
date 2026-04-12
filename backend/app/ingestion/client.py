@@ -20,6 +20,20 @@ _DEFAULT_CONCURRENCY = 3
 _DEFAULT_RETRIES = 3
 _DEFAULT_BACKOFF = 1.5  # seconds, doubles each attempt
 
+# Browser-like headers to avoid 403 blocks from nginx WAF.
+# These mimic a real Chrome browser visiting the public declarations portal.
+_DEFAULT_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://public.nazk.gov.ua/",
+    "Origin": "https://public.nazk.gov.ua",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8",
+}
+
 
 class NazkClient:
     """Async client for the NAZK public declarations API (v2)."""
@@ -31,16 +45,21 @@ class NazkClient:
         max_retries: int = _DEFAULT_RETRIES,
         backoff_base: float = _DEFAULT_BACKOFF,
         timeout: float = 30.0,
+        default_headers: dict | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._semaphore = asyncio.Semaphore(concurrency)
         self._max_retries = max_retries
         self._backoff_base = backoff_base
         self._timeout = timeout
+        self._default_headers = default_headers  # caller-supplied overrides
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "NazkClient":
-        self._client = httpx.AsyncClient(timeout=self._timeout)
+        headers = dict(_DEFAULT_HEADERS)
+        if self._default_headers:
+            headers.update(self._default_headers)
+        self._client = httpx.AsyncClient(timeout=self._timeout, headers=headers)
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -94,6 +113,7 @@ class NazkClient:
         query: str | None = None,
         declaration_year: int | None = None,
         declaration_type: int | None = None,
+        post_category: int | None = None,
         page: int = 1,
     ) -> dict:
         """Fetch a single page of search results.
@@ -109,13 +129,17 @@ class NazkClient:
             params["declaration_year"] = declaration_year
         if declaration_type is not None:
             params["declaration_type"] = declaration_type
+        if post_category is not None:
+            params["post_category"] = post_category
         return await self._get(url, params=params)
 
     async def iter_declarations(
         self,
         *,
+        query: str | None = None,
         declaration_year: int | None = None,
         declaration_type: int | None = None,
+        post_category: int | None = None,
         max_pages: int = 100,
     ) -> AsyncIterator[dict]:
         """Iterate through all pages of search results, yielding
@@ -132,8 +156,10 @@ class NazkClient:
         for page in range(1, min(max_pages, 100) + 1):
             logger.info("Fetching page %d (year=%s)", page, declaration_year)
             response = await self.search_declarations(
+                query=query,
                 declaration_year=declaration_year,
                 declaration_type=declaration_type,
+                post_category=post_category,
                 page=page,
             )
 

@@ -226,18 +226,13 @@ async def _fetch_page_with_backoff(
     max_retries: int = 5,
 ) -> dict | None:
     """Fetch a search-results page, retrying on 429/503 with 2^attempt backoff."""
-    import httpx
-
-    url = f"{client.base_url}/documents/list"
-    params: dict[str, Any] = {"page": page}
-    if year is not None:
-        params["declaration_year"] = year
-    if post_category is not None:
-        params["post_category"] = post_category
-
     for attempt in range(max_retries):
         try:
-            return await client._get(url, params=params)
+            return await client.search_declarations(
+                declaration_year=year,
+                post_category=post_category,
+                page=page,
+            )
         except Exception as exc:
             # Detect rate-limit / server errors from the exception message
             exc_str = str(exc)
@@ -457,6 +452,7 @@ async def run(
     rate_limit: float,
     checkpoint_path: Path,
     dry_run: bool,
+    api_base_url: str | None = None,
 ) -> None:
     raw_dir = Path(settings.raw_data_dir)
     categories = STRATEGY_CATEGORIES.get(strategy, STRATEGY_CATEGORIES["uniform"])
@@ -526,7 +522,7 @@ async def run(
     start_ts = time.monotonic()
 
     async with NazkClient(
-        base_url=settings.nazk_api_base_url,
+        base_url=api_base_url or settings.nazk_api_base_url,
         concurrency=concurrency,
         max_retries=settings.nazk_retry_attempts,
         timeout=settings.nazk_timeout_seconds,
@@ -658,6 +654,17 @@ def main() -> None:
         action="store_true",
         help="Print the crawl plan (categories, estimated counts, depth) without fetching",
     )
+    parser.add_argument(
+        "--api-base-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help=(
+            "Override the NAZK API base URL. Useful for pointing at mirror APIs "
+            "(e.g. https://declarations.com.ua/api/v2) when the primary endpoint is "
+            "blocked. Defaults to settings.nazk_api_base_url."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -675,6 +682,7 @@ def main() -> None:
             rate_limit=args.rate_limit,
             checkpoint_path=args.checkpoint_file,
             dry_run=args.dry_run,
+            api_base_url=args.api_base_url,
         )
     )
 
