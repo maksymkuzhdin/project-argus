@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -37,3 +39,26 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "db_integration" in item.keywords:
             item.add_marker(skip_db)
+
+
+@pytest.fixture
+def declaration_factory():
+    """Build minimal score_declaration kwargs with optional overrides."""
+
+    def _build(**overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "total_income": Decimal("100000"),
+            "total_assets": Decimal("100000"),
+            "cash_holdings": Decimal("10000"),
+            "bank_deposits": Decimal("90000"),
+            "incomes": [],
+            "monetary_assets": [],
+            "real_estate": [],
+            "vehicles": [],
+            "family_members": [],
+            "declaration_year": 2024,
+        }
+        payload.update(overrides)
+        return payload
+
+    return _build

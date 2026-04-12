@@ -1743,6 +1743,7 @@ def score_declaration(
         confidential_ratio=_confidential_ratio_from_rows(incomes, monetary_assets, real_estate),
         dwelling_area_m2=dwelling_area if dwelling_area > 0 else None,
         agri_area_m2=agri_area if agri_area > 0 else None,
+        vehicle_count=len(vehicles),
         cohort=cohort_stats,
         year=declaration_year,
         sector=declaration_sector,
@@ -1759,6 +1760,7 @@ def score_declaration(
             "cohort_confidential_ratio_outlier",
             "cohort_dwelling_area_outlier",
             "cohort_agri_area_outlier",
+            "cohort_vehicle_count_outlier",
         }:
             continue
         flags.append(RuleResult(
@@ -1767,7 +1769,7 @@ def score_declaration(
             triggered=True,
             explanation=layer2_rule.explanation,
             category="opacity" if layer2_rule.rule_name == "cohort_confidential_ratio_outlier" else "corruption",
-            severity="MEDIUM",
+            severity=layer2_rule.severity or "MEDIUM",
             confidence=1.0,
         ))
 

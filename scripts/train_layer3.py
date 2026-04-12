@@ -31,6 +31,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from app.ingestion.save_raw import iter_raw_declarations, load_declaration  # type: ignore[import-not-found]
+from app.features.ownership import compute_ownership_summary  # type: ignore[import-not-found]
 from app.normalization.assemble_timeline import assemble_timeline  # type: ignore[import-not-found]
 from app.services.pipeline import process_declaration_full  # type: ignore[import-not-found]
 from app.config import settings  # type: ignore[import-not-found]
@@ -411,6 +412,11 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for full in full_entries:
         features = full.get("features") or {}
+        ownership_summary = compute_ownership_summary(
+            list(full.get("real_estate") or []),
+            list(full.get("vehicles") or []),
+            list(full.get("bank_accounts") or []),
+        )
         deltas = delta_by_decl.get(str(full.get("declaration_id") or ""), DELTA_FEATURE_DEFAULTS)
         feature_map = build_feature_vector(
             total_income=features.get("total_income"),
@@ -419,9 +425,9 @@ def main() -> None:
             bank_deposits=features.get("bank"),
             total_value_fields=int(features.get("total_value_fields") or 0),
             unknown_value_fields=int(features.get("unknown_value_fields") or 0),
-            ownership_declarant=0,
-            ownership_family=0,
-            ownership_total=0,
+            ownership_declarant=ownership_summary.declarant_items,
+            ownership_family=ownership_summary.family_items,
+            ownership_total=ownership_summary.total_items,
             declaration_year=full.get("declaration_year"),
             incomes_count=len(full.get("incomes", [])),
             real_estate_count=len(full.get("real_estate", [])),

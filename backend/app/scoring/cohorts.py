@@ -38,6 +38,7 @@ class CohortStats:
     assets: list[float] = field(default_factory=list)
     cash_ratios: list[float] = field(default_factory=list)
     confidential_ratios: list[float] = field(default_factory=list)
+    vehicle_counts: list[float] = field(default_factory=list)
     dwelling_areas: list[float] = field(default_factory=list)
     agri_areas: list[float] = field(default_factory=list)
     dwelling_areas_by_region: dict[str, list[float]] = field(default_factory=dict)
@@ -53,6 +54,7 @@ class CohortStats:
         self.assets.sort()
         self.cash_ratios.sort()
         self.confidential_ratios.sort()
+        self.vehicle_counts.sort()
         self.dwelling_areas.sort()
         self.agri_areas.sort()
         for distribution in self.dwelling_areas_by_region.values():
@@ -70,6 +72,7 @@ class CohortRuleResult:
     triggered: bool
     explanation: str
     percentile: float | None = None
+    severity: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +128,12 @@ def build_cohort_distributions(
         conf = s.get("confidential_ratio")
         if conf is not None:
             stats.confidential_ratios.append(float(conf))
+
+        vehicle_count = s.get("vehicle_count")
+        if vehicle_count is None:
+            vehicle_count = s.get("vehicles_count")
+        if vehicle_count is not None:
+            stats.vehicle_counts.append(float(vehicle_count))
 
         dwelling_area = s.get("dwelling_area_m2")
         if dwelling_area is None:
@@ -287,23 +296,23 @@ def cohort_cash_ratio_outlier(
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     ratio = float(cash_ratio)
-    pct = compute_percentile_rank(ratio, cohort.cash_ratios)
     p90 = get_percentile_value(cohort.cash_ratios, threshold_percentile)
+    trigger_threshold = p90 + 0.20
 
-    if pct >= threshold_percentile:
-        # Score scales from 0 at P90 to 1.0 at P99+
-        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+    if ratio > trigger_threshold:
+        score = min(1.0, max(0.0, (ratio - trigger_threshold) / max(0.01, 1.0 - trigger_threshold)))
+        severity = "HIGH" if (ratio - p90) > 0.35 else "MEDIUM"
         return CohortRuleResult(
             rule, round(score, 3), True,
-            f"Cash ratio ({ratio:.1%}) at {pct:.0%} percentile "
-            f"of cohort peers (P90 = {p90:.1%}).",
-            percentile=round(pct, 3),
+            f"Cash ratio ({ratio:.1%}) exceeds cohort P90 ({p90:.1%}) by more than 20pp.",
+            percentile=round(compute_percentile_rank(ratio, cohort.cash_ratios), 3),
+            severity=severity,
         )
 
     return CohortRuleResult(
         rule, 0.0, False,
-        f"Cash ratio at {pct:.0%} percentile of cohort peers.",
-        percentile=round(pct, 3),
+        f"Cash ratio ({ratio:.1%}) is within 20pp of cohort P90 ({p90:.1%}).",
+        percentile=round(compute_percentile_rank(ratio, cohort.cash_ratios), 3),
     )
 
 
@@ -311,7 +320,7 @@ def cohort_confidential_ratio_outlier(
     confidential_ratio: float | None,
     cohort: CohortStats | None,
     *,
-    threshold_percentile: float = 0.85,
+    threshold_percentile: float = 0.75,
 ) -> CohortRuleResult:
     """Flag declarants whose confidential_ratio is far above their cohort peers.
 
@@ -320,7 +329,7 @@ def cohort_confidential_ratio_outlier(
     confidential_ratio:
         Share of value fields marked as confidential or redacted.
     threshold_percentile:
-        Percentile above which the ratio is flagged (default 85th).
+        Percentile above which the ratio is flagged (default 75th).
     """
     rule = "cohort_confidential_ratio_outlier"
 
@@ -328,62 +337,91 @@ def cohort_confidential_ratio_outlier(
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     ratio = float(confidential_ratio)
-    pct = compute_percentile_rank(ratio, cohort.confidential_ratios)
-    p85 = get_percentile_value(cohort.confidential_ratios, threshold_percentile)
+    p75 = get_percentile_value(cohort.confidential_ratios, threshold_percentile)
+    p90 = get_percentile_value(cohort.confidential_ratios, 0.90)
 
-    if pct >= threshold_percentile:
-        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+    if ratio > p75:
+        score = min(1.0, max(0.0, (ratio - p75) / max(0.01, 1.0 - p75)))
+        severity = "HIGH" if ratio > p90 + 0.10 else "MEDIUM"
         return CohortRuleResult(
             rule, round(score, 3), True,
-            f"Confidential density ({ratio:.1%}) at {pct:.0%} percentile "
-            f"of cohort peers (P85 = {p85:.1%}).",
-            percentile=round(pct, 3),
+            f"Confidential density ({ratio:.1%}) exceeds cohort P75 ({p75:.1%}).",
+            percentile=round(compute_percentile_rank(ratio, cohort.confidential_ratios), 3),
+            severity=severity,
         )
 
     return CohortRuleResult(
         rule, 0.0, False,
-        f"Confidential density at {pct:.0%} percentile of cohort peers.",
-        percentile=round(pct, 3),
+        f"Confidential density ({ratio:.1%}) is within cohort P75 ({p75:.1%}).",
+        percentile=round(compute_percentile_rank(ratio, cohort.confidential_ratios), 3),
     )
-
-
 def cohort_dwelling_area_outlier(
     dwelling_area_m2: float | None,
     cohort: CohortStats | None,
     *,
-    threshold_percentile: float = 0.95,
+    primary_region: str | None = None,
+    threshold_percentile: float = 0.90,
 ) -> CohortRuleResult:
-    """Flag declarants whose dwelling area is far above their cohort peers.
-
-    Parameters
-    ----------
-    dwelling_area_m2:
-        Total housing area in square meters.
-    threshold_percentile:
-        Percentile above which the area is flagged (default 95th).
-    """
+    """Flag declarants whose dwelling area is far above their regional cohort peers."""
     rule = "cohort_dwelling_area_outlier"
 
-    if dwelling_area_m2 is None or cohort is None or len(getattr(cohort, "dwelling_areas", [])) < 5:
+    if dwelling_area_m2 is None or cohort is None:
+        return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
+
+    region = str(primary_region or "").strip().lower()
+    region_distribution = getattr(cohort, "dwelling_areas_by_region", {}).get(region, []) if region else []
+    if len(region_distribution) < 5:
         return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
 
     area = float(dwelling_area_m2)
-    pct = compute_percentile_rank(area, cohort.dwelling_areas)
-    p95 = get_percentile_value(cohort.dwelling_areas, threshold_percentile)
+    p90 = get_percentile_value(region_distribution, threshold_percentile)
+    p95 = get_percentile_value(region_distribution, 0.95)
 
-    if pct >= threshold_percentile:
-        score = min(1.0, (pct - threshold_percentile) / (1.0 - threshold_percentile))
+    if area > p90:
+        score = min(1.0, max(0.0, (area - p90) / max(1.0, p95 - p90 if p95 > p90 else p90)))
+        severity = "HIGH" if area > p95 else "MEDIUM"
         return CohortRuleResult(
             rule, round(score, 3), True,
-            f"Dwelling area ({area:.0f} m²) at {pct:.0%} percentile "
-            f"of cohort peers (P95 = {p95:.0f} m²).",
-            percentile=round(pct, 3),
+            f"Dwelling area ({area:.0f} m²) exceeds regional cohort P90 ({p90:.0f} m²).",
+            percentile=round(compute_percentile_rank(area, region_distribution), 3),
+            severity=severity,
         )
 
     return CohortRuleResult(
         rule, 0.0, False,
-        f"Dwelling area at {pct:.0%} percentile of cohort peers.",
-        percentile=round(pct, 3),
+        f"Dwelling area ({area:.0f} m²) is within regional cohort P90 ({p90:.0f} m²).",
+        percentile=round(compute_percentile_rank(area, region_distribution), 3),
+    )
+
+
+def cohort_vehicle_count_outlier(
+    vehicle_count: int | float | None,
+    cohort: CohortStats | None,
+    *,
+    threshold_percentile: float = 0.90,
+) -> CohortRuleResult:
+    """Flag declarants whose vehicle count is far above their cohort peers."""
+    rule = "cohort_vehicle_count_outlier"
+
+    if vehicle_count is None or cohort is None or len(getattr(cohort, "vehicle_counts", [])) < 5:
+        return CohortRuleResult(rule, 0.0, False, "Insufficient cohort data.")
+
+    count = float(vehicle_count)
+    p90 = get_percentile_value(cohort.vehicle_counts, threshold_percentile)
+
+    if count > p90:
+        score = min(1.0, max(0.0, (count - p90) / max(1.0, p90 if p90 > 0 else 1.0)))
+        return CohortRuleResult(
+            rule, round(score, 3), True,
+            f"Vehicle count ({count:.0f}) exceeds cohort P90 ({p90:.0f}).",
+            percentile=round(compute_percentile_rank(count, cohort.vehicle_counts), 3),
+            severity="MEDIUM",
+        )
+
+    return CohortRuleResult(
+        rule, 0.0, False,
+        f"Vehicle count ({count:.0f}) is within cohort P90 ({p90:.0f}).",
+        percentile=round(compute_percentile_rank(count, cohort.vehicle_counts), 3),
     )
 
 
@@ -438,6 +476,7 @@ def score_declaration_l2(
     confidential_ratio: float | None = None,
     dwelling_area_m2: float | None = None,
     agri_area_m2: float | None = None,
+    vehicle_count: int | None = None,
     cohort: CohortStats | None = None,  # Deprecated fallback for backward compatibility
     # Multi-dimensional cohort support (Task 4a)
     year: int | None = None,
@@ -456,6 +495,8 @@ def score_declaration_l2(
     ----------
     total_income, total_assets, cash_ratio, confidential_ratio, dwelling_area_m2, agri_area_m2:
         Feature values to score.
+    vehicle_count:
+        Count of declared vehicles.
     cohort:
         Deprecated. Legacy single CohortStats object.
     year, sector, government_level, primary_region:
@@ -517,7 +558,7 @@ def score_declaration_l2(
         conf_rule.explanation += f" [cohort: {income_assets_key}]"
     results.append(conf_rule)
     
-    dwelling_rule = cohort_dwelling_area_outlier(dwelling_area_m2, area_cohort)
+    dwelling_rule = cohort_dwelling_area_outlier(dwelling_area_m2, area_cohort, primary_region=primary_region)
     if area_key:
         dwelling_rule.explanation += f" [cohort: {area_key}]"
     results.append(dwelling_rule)
@@ -526,6 +567,11 @@ def score_declaration_l2(
     if area_key:
         agri_rule.explanation += f" [cohort: {area_key}]"
     results.append(agri_rule)
+
+    vehicle_rule = cohort_vehicle_count_outlier(vehicle_count, income_assets_cohort)
+    if income_assets_key:
+        vehicle_rule.explanation += f" [cohort: {income_assets_key}]"
+    results.append(vehicle_rule)
     
     return results
 
@@ -611,6 +657,12 @@ def build_multi_dimensional_cohorts(
         conf = s.get("confidential_ratio")
         if conf is not None:
             stats.confidential_ratios.append(float(conf))
+
+        vehicle_count = s.get("vehicle_count")
+        if vehicle_count is None:
+            vehicle_count = s.get("vehicles_count")
+        if vehicle_count is not None:
+            stats.vehicle_counts.append(float(vehicle_count))
 
         # Area metrics: also regional breakdowns
         dwelling_area = s.get("dwelling_area_m2") or s.get("dwelling_area")
@@ -774,6 +826,7 @@ class CohortFallbackResolver:
             global_stats.assets.extend(stats.assets)
             global_stats.cash_ratios.extend(stats.cash_ratios)
             global_stats.confidential_ratios.extend(stats.confidential_ratios)
+            global_stats.vehicle_counts.extend(stats.vehicle_counts)
             global_stats.dwelling_areas.extend(stats.dwelling_areas)
             global_stats.agri_areas.extend(stats.agri_areas)
 
