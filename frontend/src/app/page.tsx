@@ -168,7 +168,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
               <input type="hidden" name="page" value="1" />
               <input type="hidden" name="sort_by" value={sortBy} />
               <input type="hidden" name="sort_dir" value={sortDir} />
-              <input type="text" name="query" defaultValue={query} placeholder="Search name or org..." className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500" />
+              <input type="text" name="query" defaultValue={query} placeholder="Search name or org..." className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500" data-testid="search-input" />
               <button type="submit" className="bg-amber-500 text-zinc-950 rounded-md px-4 py-1.5 text-sm font-medium hover:bg-amber-400 transition-colors">Search</button>
             </form>
           </div>
@@ -210,7 +210,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                 {declarations.items.map((decl) => {
                   const scoreBand = getScoreBand(decl.score);
                   return (
-                    <tr key={decl.declaration_id} className="hover:bg-zinc-800/20 transition-colors">
+                    <tr key={decl.declaration_id} className="hover:bg-zinc-800/20 transition-colors" data-testid="declaration-row">
                     <td className="px-6 py-4">
                       <Link
                         href={`/declaration?id=${decl.declaration_id}&returnTo=${encodeURIComponent(currentDashboardHref)}`}
@@ -256,7 +256,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
                       )}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className={`font-mono font-medium ${scoreBand.textClass}`}>
+                      <div className={`font-mono font-medium ${scoreBand.textClass}`} data-testid="score-value">
                         {decl.score.toFixed(1)}
                       </div>
                       <div className="mt-1">

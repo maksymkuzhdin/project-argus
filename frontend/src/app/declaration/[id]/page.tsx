@@ -6,11 +6,12 @@ import { getScoreBand } from "@/lib/scoreBands";
 
 export const revalidate = 0;
 
-function formatField(field: unknown): string {
+function formatField(field: unknown, _depth = 0): string {
+    if (_depth > 5) return "[Deep]";
     if (field === null || field === undefined) return "";
     if (typeof field === "object") {
         if (Array.isArray(field)) {
-            return field.map(f => formatField(f)).join(", ");
+            return field.map(f => formatField(f, _depth + 1)).join(", ");
         }
         if ('value' in field || 'status' in field) {
             const valueField = (field as Record<string, unknown>).value;
@@ -76,7 +77,7 @@ function resolveAssetOwner(personRef: unknown, familyMembers: Record<string, unk
     return resolveIncomeRecipient(personRef, familyMembers);
 }
 
-function getMl1Rule(ruleDetails: RuleDetail[] | undefined): RuleDetail | null {
+function getMl1Rule(ruleDetails: RuleDetail[] | undefined | null): RuleDetail | null {
     if (!Array.isArray(ruleDetails)) return null;
     const ml = ruleDetails.find((r) => r.rule_name === "ML1" && r.triggered);
     return ml || null;
@@ -259,7 +260,8 @@ export default async function DeclarationDetail({
     const mlMeta = ml1Rule?.metadata as Record<string, unknown> | undefined;
     const mlAnomalyScore = typeof mlMeta?.anomaly_score === "number" ? mlMeta.anomaly_score : null;
     const mlPercentile = typeof mlMeta?.anomaly_percentile === "number" ? mlMeta.anomaly_percentile : null;
-    const mlTopDeviations = Array.isArray(mlMeta?.top_deviations) ? mlMeta.top_deviations : [];
+    type DeviationItem = { feature_name: unknown; value: unknown; deviation: unknown };
+    const mlTopDeviations = Array.isArray(mlMeta?.top_deviations) ? (mlMeta.top_deviations as DeviationItem[]) : [];
     const triggeredRuleBadges = Array.isArray(summary.triggered_rules)
         ? summary.triggered_rules.filter((rule) => typeof rule === "string" && rule.trim())
         : [];
@@ -340,6 +342,27 @@ export default async function DeclarationDetail({
                     </div>
                 </header>
 
+                {/* Scoring Context — cohort assignment */}
+                {summary.cohort_key ? (
+                    <div className="text-xs text-zinc-500">
+                        Scored against cohort: <span className="text-zinc-400">{summary.cohort_key}</span>
+                        {(() => {
+                            const parts = [
+                                summary.cohort_sector,
+                                summary.cohort_role_cluster,
+                                summary.cohort_gov_level,
+                                summary.cohort_size != null ? `${summary.cohort_size} peers` : null,
+                            ].filter(Boolean);
+                            return parts.length > 0 ? (
+                                <span> ({parts.join(" · ")})</span>
+                            ) : null;
+                        })()}
+                        {summary.scoring_layer != null ? (
+                            <span> · Layer {summary.scoring_layer}</span>
+                        ) : null}
+                    </div>
+                ) : null}
+
                 {/* Scoring & Anomalies */}
                 <section data-testid="score-section">
                     <h2 className="text-xl font-semibold text-zinc-100 mb-4">Anomaly Analysis</h2>
@@ -383,6 +406,71 @@ export default async function DeclarationDetail({
                     </div>
                 </section>
 
+                {/* Prozorro Contract Exposure */}
+                {((summary.prozorro_contract_count != null && summary.prozorro_contract_count > 0) ||
+                    (Array.isArray(summary.triggered_rules) &&
+                        summary.triggered_rules.some((r) => r === "CR17" || r === "CR18" || r === "CR19"))) && (
+                    <section data-testid="prozorro-section">
+                        <h2 className="text-xl font-semibold text-zinc-100 mb-4">Prozorro Contract Exposure</h2>
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="text-xs text-zinc-500 mb-1">Employer (EDRPOU)</div>
+                                    <div className="text-lg font-mono text-zinc-100">
+                                        {summary.prozorro_employer_name
+                                            ? `${summary.prozorro_employer_name}${
+                                                  summary.prozorro_employer_edrpou
+                                                      ? ` (${summary.prozorro_employer_edrpou})`
+                                                      : ""
+                                              }`
+                                            : summary.prozorro_employer_edrpou ?? "—"}
+                                    </div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="text-xs text-zinc-500 mb-1">Contracts Found</div>
+                                    <div className="text-2xl font-mono text-amber-300">
+                                        {summary.prozorro_contract_count != null
+                                            ? summary.prozorro_contract_count
+                                            : "—"}
+                                    </div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="text-xs text-zinc-500 mb-1">Total Contract Value</div>
+                                    <div className="text-2xl font-mono text-amber-300">
+                                        {summary.prozorro_total_contract_value != null
+                                            ? summary.prozorro_total_contract_value.toLocaleString()
+                                            : "—"}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {summary.prozorro_employer_edrpou && (
+                                <div>
+                                    <a
+                                        href={`https://prozorro.gov.ua/search/tender?query=${encodeURIComponent(summary.prozorro_employer_edrpou)}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-amber-400 hover:text-amber-300 transition-colors font-medium text-sm"
+                                    >
+                                        Search contracts on Prozorro →
+                                    </a>
+                                </div>
+                            )}
+
+                            <div className="text-xs text-zinc-500 leading-relaxed">
+                                Contract exposure is cross-referenced from the public Prozorro registry.
+                                Presence of contracts is a contextual signal, not an indicator of wrongdoing.
+                            </div>
+                            {summary.prozorro_enriched_at && (
+                                <div className="text-xs text-zinc-600">
+                                    Enriched at:{" "}
+                                    {new Date(summary.prozorro_enriched_at).toLocaleDateString()}
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                )}
+
                 {/* Layer 3 Anomaly Profile */}
                 {ml1Rule && mlAnomalyScore !== null && (
                     <section data-testid="ml1-section">
@@ -407,15 +495,12 @@ export default async function DeclarationDetail({
                                 <div>
                                     <div className="text-sm font-medium text-zinc-400 mb-2">Top Feature Deviations</div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        {mlTopDeviations.slice(0, 4).map((item, idx) => {
-                                            const row = item as Record<string, unknown>;
-                                            return (
-                                                <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-sm">
-                                                    <div className="text-zinc-200 font-medium">{formatField(row.feature_name)}</div>
-                                                    <div className="text-zinc-500">Value: {formatField(row.value)} • Deviation: {formatField(row.deviation)}</div>
-                                                </div>
-                                            );
-                                        })}
+                                        {mlTopDeviations.slice(0, 4).map((item, idx) => (
+                                            <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-sm">
+                                                <div className="text-zinc-200 font-medium">{formatField(item.feature_name)}</div>
+                                                <div className="text-zinc-500">Value: {formatField(item.value)} • Deviation: {formatField(item.deviation)}</div>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             )}
@@ -490,7 +575,7 @@ export default async function DeclarationDetail({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {data.family_members.map((member: Record<string, unknown>, i: number) => (
+                                    {data.family_members.map((member, i) => (
                                         <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
                                             <td className="px-6 py-3">{formatField(member.relation)}</td>
                                             <td className="px-6 py-3">{formatField(member.lastname)} {formatField(member.firstname)} {formatField(member.middlename)}</td>
@@ -589,7 +674,7 @@ export default async function DeclarationDetail({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {data.bank_accounts.map((item: Record<string, unknown>, i: number) => (
+                                    {data.bank_accounts.map((item, i) => (
                                         <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
                                             <td className="px-6 py-3">{formatField(item.institution_name)}</td>
                                             <td className="px-6 py-3 text-emerald-400/80">{formatField(item.account_owner_resolved)}</td>
@@ -616,7 +701,7 @@ export default async function DeclarationDetail({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {incomes.map((item: Record<string, unknown>, i: number) => (
+                                    {incomes.map((item, i) => (
                                         <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
                                             <td className="px-6 py-3 text-emerald-400/80">{resolveIncomeRecipient(item.person_ref, familyMembers)}</td>
                                             <td className="px-6 py-3">{formatField(item.income_type)}</td>
@@ -648,7 +733,7 @@ export default async function DeclarationDetail({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50">
-                                    {data.monetary.map((item: Record<string, unknown>, i: number) => (
+                                    {data.monetary.map((item, i) => (
                                         <tr key={i} className="hover:bg-zinc-800/20 transition-colors">
                                             <td className="px-6 py-3 text-emerald-400/80">{resolveAssetOwner(item.person_ref, familyMembers)}</td>
                                             <td className="px-6 py-3">{formatField(item.asset_type)}</td>

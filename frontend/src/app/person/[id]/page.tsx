@@ -87,9 +87,19 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
           </div>
           {data.timeline_score.triggered_rules.length > 0 ? (
             <ul className="mt-4 text-sm text-zinc-300 space-y-2">
-              {data.timeline_score.triggered_rules.map((rule) => (
-                <li key={rule} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2">{rule}</li>
-              ))}
+              {data.timeline_score.triggered_rules.map((rule) => {
+                const detail = data.timeline_score.rule_details?.find(
+                  (rd) => rd.rule_name === rule
+                );
+                return (
+                  <li key={rule} className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2">
+                    <div className="font-medium">{rule}</div>
+                    {detail?.explanation && (
+                      <div className="text-zinc-500 text-xs mt-0.5">{detail.explanation}</div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="mt-3 text-sm text-emerald-400">No multi-year anomaly rules triggered.</p>
@@ -140,7 +150,10 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
                       <div className="text-xs text-zinc-500">{snap.institution || "-"}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/declaration?id=${snap.declaration_id}`} className="text-blue-400 hover:text-blue-300">
+                      <Link
+                        href={`/declaration/${snap.declaration_id}?returnTo=/person/${data.user_declarant_id}`}
+                        className="text-blue-400 hover:text-blue-300"
+                      >
                         Open declaration
                       </Link>
                     </td>
@@ -195,7 +208,7 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
 
         {data.changes.length > 0 ? (
           <section className="space-y-3">
-            <h2 className="text-xl font-semibold text-zinc-100">Major Asset Changes (CR14 Context)</h2>
+            <h2 className="text-xl font-semibold text-zinc-100">Year-over-Year Asset Signals (CR14 / CR15)</h2>
             <div className="grid gap-3">
               {data.changes.map((chg) => (
                 <div
@@ -215,6 +228,20 @@ export default async function PersonTimelinePage({ params }: { params: Promise<{
                     {" | "}
                     One-off income (current year): {formatMoney(chg.one_off_income_curr)}
                   </div>
+                  {chg.real_estate_3yr_ratio != null && (
+                    <div className="mt-2 text-zinc-500 text-xs">
+                      <span className="text-zinc-400">Real estate (3yr ratio):</span>{" "}
+                      <span className="font-mono">{chg.real_estate_3yr_ratio.toFixed(1)}x</span>
+                      {(chg.real_estate_value_prev != null || chg.real_estate_value_curr != null) && (
+                        <span>
+                          {" — Prev: "}
+                          <span className="font-mono">{formatMoney(chg.real_estate_value_prev ?? null)}</span>
+                          {" → Curr: "}
+                          <span className="font-mono">{formatMoney(chg.real_estate_value_curr ?? null)}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

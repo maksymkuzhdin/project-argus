@@ -32,7 +32,20 @@ export interface DeclarationSummary {
     name: string;
     role: string;
     institution: string;
-    rule_details?: RuleDetail[];
+    rule_details?: RuleDetail[] | null;
+    // Prozorro enrichment (nullable — only present after enrichment has run)
+    prozorro_contract_count?: number | null;
+    prozorro_total_contract_value?: number | null;
+    prozorro_enriched_at?: string | null;
+    prozorro_employer_edrpou?: string | null;
+    prozorro_employer_name?: string | null;
+    // Cohort assignment metadata
+    cohort_key?: string | null;
+    cohort_sector?: string | null;
+    cohort_role_cluster?: string | null;
+    cohort_gov_level?: string | null;
+    cohort_size?: number | null;
+    scoring_layer?: number | null;
 }
 
 export interface PaginatedDeclarations {
@@ -124,6 +137,10 @@ export interface PersonTimelineResponse {
         max_appeared_value: string | null;
         max_disappeared_value: string | null;
         one_off_income_curr: string | null;
+        // These were added when CR15 was implemented but never added to the TS type
+        real_estate_3yr_ratio?: number | null;
+        real_estate_value_prev?: string | null;
+        real_estate_value_curr?: string | null;
     }[];
     timeline_score: {
         total_score: number;
