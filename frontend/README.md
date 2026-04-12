@@ -42,7 +42,18 @@ npm run e2e:debug  # Run with interactive debugger
 npm run e2e:ui     # Run with test UI
 ```
 
-`npm run lint` and `npm run build` are enforced by CI. E2E tests are run in the CI pipeline after backend tests pass.
+CI quality gate order is explicit:
+1. `npm run lint`
+2. `npm run build`
+3. `npm run e2e` (after backend tests and frontend quality pass)
+
+Playwright smoke tests are intentionally deterministic and run on a single browser project (`chromium`) in CI for faster, less flaky signal.
+
+### Running E2E Locally
+
+`npm run e2e` starts the frontend dev server automatically via Playwright config and expects a backend API at `http://localhost:8000` (or via `NEXT_PUBLIC_API_URL` / `INTERNAL_API_URL`).
+
+If the backend has no declarations, smoke tests accept explicit empty/error states where applicable.
 
 ## Docker Notes
 

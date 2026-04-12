@@ -127,18 +127,18 @@ def build_cohort_distributions(
             stats.confidential_ratios.append(float(conf))
 
         dwelling_area = s.get("dwelling_area_m2")
-        if dwelling_area is not None:
-            dwelling_f = float(dwelling_area)
+        if dwelling_area is None:
+            dwelling_area = s.get("dwelling_area")
+        dwelling_f = float(dwelling_area) if dwelling_area is not None else None
+        if dwelling_f is not None:
             stats.dwelling_areas.append(dwelling_f)
-        else:
-            dwelling_f = None
 
         agri_area = s.get("agri_area_m2")
-        if agri_area is not None:
-            agri_f = float(agri_area)
+        if agri_area is None:
+            agri_area = s.get("agri_area")
+        agri_f = float(agri_area) if agri_area is not None else None
+        if agri_f is not None:
             stats.agri_areas.append(agri_f)
-        else:
-            agri_f = None
 
         region = str(s.get("primary_region") or "").strip().lower()
         if region:

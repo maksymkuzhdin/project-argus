@@ -199,10 +199,11 @@ Requires ≥ 2 years for same person.
 - **Definitions (per year):**  
   - Sum `totalArea` of all land plots (m²) and of all dwellings (houses, apartments) owned by household.  
   - Classify by region (oblast) and by job category of declarant (e.g., judge, prosecutor, doctor, teacher, local executive, etc.).
-- **Relative model (preferred):**  
-  - When you have enough data, compute distributions **within each cohort** (job category × region).  
-  - Flag top 10% in total real estate area as **MEDIUM**, top 5% as **HIGH**.
-- **Absolute interim thresholds (before you have distributions):**  
+- **Relative model (implemented when cohort data is available):**  
+  - When cohort distributions have ≥5 peers, use percentile thresholds.  
+  - Dwelling/agri area in top 5% of cohort → **MEDIUM** (`[relative mode]` in explanation).  
+  - Dwelling/agri area in top 1% of cohort → **HIGH** (`[relative mode]` in explanation).  
+- **Absolute interim thresholds (fallback when cohort data is absent or sparse):**  
   - For city‑based officials: dwellings (houses/apartments) with total area > 250 m² → **MEDIUM**; > 400 m² → **HIGH**.  
   - For any officials: agricultural land area > 10 ha (100,000 m²) → **MEDIUM**; > 50 ha → **HIGH**.  
 - **Justification:** Given typical flat sizes (40–80 m²) and urban land scarcity, very large residential or agricultural holdings stand out strongly compared to normal public‑sector households.

@@ -1,6 +1,6 @@
 # Quick Start: Launch the Dashboard
 
-Project Argus is a Next.js + FastAPI application. Choose your launch method:
+Project Argus is a Next.js + FastAPI application. This guide reflects the current repository workflow and keeps setup practical for contributors.
 
 ---
 
@@ -33,9 +33,8 @@ cd argus
 # Copy the example env file
 cp .env.example .env
 
-# Edit .env to use local Database URL:
-# DATABASE_URL=sqlite:///./argus.db
-# (or set up a local PostgreSQL if you prefer)
+# If you run backend outside Docker and use local PostgreSQL:
+# DATABASE_URL=postgresql://argus:argus_local@localhost:5432/argus
 ```
 
 ### Step 2: Start Backend (Terminal 1)
@@ -70,13 +69,6 @@ npm install
 npm run dev
 ```
 
-You'll see:
-```
- ▲ Next.js 16.1.6
- - Local:        http://localhost:3000
- - Ready in 2.8s
-```
-
 ### Step 4: Open Dashboard
 
 **http://localhost:3000**
@@ -94,8 +86,8 @@ You'll see:
 - "No declarations processed yet" message
 - Load sample data:
   ```bash
-  cd argus/scripts
-  python run_ingestion.py --year 2024 --max-pages 5
+  cd argus
+  python scripts/run_ingestion.py --year 2024 --max-pages 5
   ```
 
 ---
@@ -118,8 +110,15 @@ Set `NEXT_PUBLIC_E2E_FIXTURES=0` to run E2E against live backend data.
 ```bash
 cd backend
 uvicorn app.main:app --reload                    # Dev server with auto-reload
-python -m pytest app/tests -q                    # Run unit tests (155 tests)
-python scripts/run_scoring.py --layer2           # Run scoring pipeline
+python -m pytest app/tests -q                    # Run backend tests
+```
+
+From repository root, pipeline and refresh helpers:
+
+```bash
+python scripts/run_refresh_cycle.py --year 2024 --skip-ingestion --csv output/scores_refresh.csv
+python scripts/run_scoring.py --year 2024 --top 20
+python scripts/run_timeline.py --top 10
 ```
 
 ---
@@ -134,7 +133,6 @@ python scripts/run_scoring.py --layer2           # Run scoring pipeline
 - Verify `DATABASE_URL` in `.env` matches your setup
 - For Docker: use `DATABASE_URL=postgresql://argus:argus_local@db:5432/argus`
 - For local PostgreSQL: `DATABASE_URL=postgresql://user:password@localhost:5432/argus`
-- For SQLite: `DATABASE_URL=sqlite:///./argus.db`
 
 ### Frontend Won't Load
 - Ensure backend is running on port 8000
@@ -142,13 +140,7 @@ python scripts/run_scoring.py --layer2           # Run scoring pipeline
 - Verify `NEXT_PUBLIC_API_URL` in `.env` or docker-compose.yml
 
 ### Stale Module Cache
-```bash
-# Frontend
-rm -rf .next node_modules && npm install && npm run dev
-
-# Backend
-rm -rf __pycache__ .pytest_cache && pip install -r requirements.txt
-```
+- On Windows, remove `.next`, `node_modules`, `__pycache__`, or `.pytest_cache` manually if needed, then reinstall deps.
 
 ---
 
@@ -165,7 +157,12 @@ Once dashboard is running:
 
 3. **Explore API**: Backend docs at `http://localhost:8000/docs`
 
-4. **Read Docs**: See `docs/` folder for methodology, runbooks, and architecture
+4. **Read Core Docs**:
+   - `docs/ingestion-runbook.md`
+   - `docs/scoring-methodology.md`
+   - `docs/release-checklist.md`
+   - `docs/deployment-runbook.md`
+   - `docs/legal-guardrails.md`
 
 ---
 

@@ -4,7 +4,7 @@ This runbook defines a safe, repeatable deployment flow for Project Argus before
 
 ## 1. Preconditions
 
-- All checks in [docs/release-checklist.md](docs/release-checklist.md) are complete.
+- All checks in [release-checklist.md](release-checklist.md) are complete.
 - Branch is up to date with `main` and CI is green.
 - Database backup has been taken and restore path is known.
 

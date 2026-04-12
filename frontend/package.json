@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node -e \"require('fs').rmSync('.next/dev', { recursive: true, force: true })\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "e2e": "playwright test",
+    "e2e": "playwright test --reporter=list,html",
     "e2e:debug": "playwright test --debug",
     "e2e:ui": "playwright test --ui"
   },

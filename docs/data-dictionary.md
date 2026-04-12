@@ -10,6 +10,9 @@ Parsed from **step_1**.  One row per declaration.
 |--------|------|-------------|
 | `id` | int (PK) | Auto-increment primary key |
 | `declaration_id` | string (unique, indexed) | NAZK declaration UUID |
+| `user_declarant_id` | int (indexed) | Stable person identifier used for multi-year timeline grouping |
+| `declaration_year` | int (indexed) | Reporting year used in list sorting and timeline assembly |
+| `declaration_type` | int | Declaration type code from source declaration |
 | `firstname` | string | Declarant first name |
 | `lastname` | string | Declarant last name |
 | `middlename` | string | Declarant patronymic |

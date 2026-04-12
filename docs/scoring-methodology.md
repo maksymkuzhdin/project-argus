@@ -7,6 +7,7 @@ Project Argus uses a layered, explainable anomaly scoring system. The platform n
 - Declaration score (`total_score`) uses a native **0.0–100.0** scale.
 - Timeline score (`timeline_score.total_score`) also uses **0.0–100.0**.
 - Rule-level contributions are weighted points, not percentages.
+- Layer 2 cohort scores are normalized within each cohort before they are blended into the final dashboard ranking.
 
 ## Aggregation Model
 
@@ -28,6 +29,22 @@ Then combined into a bounded overall score:
 
 `data_quality_score` is capped to reduce technical-noise dominance.
 
+## Layer 2 Cohort Ensemble
+
+Layer 2 is a cohort-scoped ensemble, not a single global model. The recommended composition is:
+
+- Isolation Forest for sparse, distribution-free anomaly isolation.
+- A dense autoencoder for reconstruction-error anomalies across feature interactions.
+- ECOD for fast, interpretable tail-probability outlier detection.
+
+Practical scoring guidance:
+
+- Train one set of models per cohort rather than across all declarations.
+- Normalize model outputs within each cohort before blending them.
+- Use a weighted blend such as `0.35 * IF + 0.40 * AE + 0.25 * ECOD` as a starting point.
+- Promote a confidence tier when two or more models agree on a high anomaly score.
+- Prefer a stratified training corpus of roughly 100k–200k declarations total, balanced across cohorts, years, and regions, instead of fitting on all 7M records.
+
 ## Implemented Rule Layers
 
 ### Declaration-Level Rules
@@ -36,6 +53,7 @@ Then combined into a bounded overall score:
 - Corruption and opacity checks: `CR1`, `CR2`, `CR3`, `CR4`, `CR6`, `CR7`, `CR8`, `CR9`, `CR10`, `CR11`, `CR12`, `CR13`
 - Cohort outlier checks: `CR16` (when cohort stats are available)
 - Cohort opacity check: `BR3` (when cohort stats are available)
+- Cohort ensemble support: IF, AE, and ECOD outputs when the Layer 2 pipeline is enabled
 
 ### Timeline Rules
 
@@ -49,7 +67,15 @@ Timeline scoring uses a weighted composite and the same bounded 0–100 mapping.
 
 ### Deferred Rules
 
-Remaining deferred scope is primarily ML additions and optional calibration refinements.
+Remaining deferred scope is primarily:
+
+- Interaction bonus combinations not yet wired in scoring (`CR11 + CR12`, `CR14 + no one-off income`, `CR6 + CR15`).
+
+CR6 currently supports both:
+- cohort-relative thresholds when valid cohort distributions are available, and
+- absolute fallback thresholds when cohort context is missing or too small.
+
+The currently deferred part is additional interaction-bonus wiring, not base CR6 thresholding.
 
 ## Explanation Contract
 
@@ -65,25 +91,6 @@ Each triggered rule provides:
 
 This keeps outputs transparent for API consumers and UI rendering.
 
-## CR6 Threshold Mode Selection
+### Layer 3 (Reserved)
 
-CR6 now uses a deterministic two-mode selector:
-
-- **Relative mode (preferred):** uses cohort distributions when available and valid.
-  - Region-relative first (same post_type/year cohort, matching primary region).
-  - Falls back to post/year cohort-wide distribution if region sample is not valid.
-  - Validity checks are explicit: minimum sample size and minimum variation.
-  - Severity mapping: top 10% = MEDIUM, top 5% = HIGH.
-- **Absolute fallback mode:** keeps existing fixed thresholds when relative inputs are missing/sparse/unreliable.
-  - Dwellings: > 250 m2 MEDIUM, > 400 m2 HIGH.
-  - Agricultural land: > 10 ha MEDIUM, > 50 ha HIGH.
-
-CR6 explanations now include the mode used (`relative` or `absolute fallback`) and the source/reason used for threshold selection.
-
-## Layer 3 (ML)
-
-Unsupervised ML is still deferred. Planned additions remain:
-
-- Isolation Forest
-- Optional autoencoder
-- ML as additive context, never a replacement for deterministic explainable rules
+Additional experimental models remain deferred. The current plan is to keep Layer 2 limited to the three-model cohort ensemble above and use any future additions only as additive context, never as a replacement for deterministic explainable rules.
